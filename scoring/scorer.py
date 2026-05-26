@@ -46,10 +46,17 @@ def _decisiveness(velocities: np.ndarray) -> float:
 
 
 def score_segment(seg: Segment, trajectory: Trajectory) -> QualityScore:
-    positions = seg.positions
     pts = trajectory.points[seg.start_idx:seg.end_idx]
-    velocities = np.array([p.velocity for p in pts])
     confidences = np.array([p.confidence for p in pts])
+
+    # Only score on detected frames to avoid zero-position artifacts
+    detected_mask = confidences > 0
+    if detected_mask.sum() >= 2:
+        positions = seg.positions[detected_mask]
+        velocities = np.array([p.velocity for p in pts])[detected_mask]
+    else:
+        positions = seg.positions
+        velocities = np.array([p.velocity for p in pts])
 
     s = _smoothness(positions)
     pe = _path_efficiency(positions)

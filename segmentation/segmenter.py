@@ -7,9 +7,7 @@ from scipy.signal import savgol_filter
 
 from core.types import PrimitiveType, Segment, Trajectory
 
-# Thresholds
-GRIPPER_CLOSE_THRESH = 0.55   # gripper_state > this → hand is closing/closed
-GRIPPER_OPEN_THRESH = 0.35    # gripper_state < this → hand is opening/open
+# Thresholds — adaptive, computed per-trajectory
 MIN_SEGMENT_FRAMES = 3        # discard segments shorter than this
 
 
@@ -20,42 +18,44 @@ def _smooth(arr: np.ndarray, window: int = 5) -> np.ndarray:
 
 
 def _classify_frame(
-    pos: np.ndarray,       # (3,) current wrist position (x, y, z)
-    prev_pos: np.ndarray,  # (3,)
+    pos: np.ndarray,
+    prev_pos: np.ndarray,
     gripper: float,
     prev_gripper: float,
     vel: float,
-    z_up_bias: float,      # positive = moving up (lower y in image coords, or higher z)
+    z_up_bias: float,
+    gripper_close: float,
+    gripper_open: float,
 ) -> PrimitiveType:
     """
-    Heuristic single-frame primitive label.
+    Heuristic single-frame primitive label with adaptive thresholds.
 
-    MediaPipe wrist coords: x ∈ [0,1] left→right, y ∈ [0,1] top→bottom, z depth.
+    MediaPipe wrist coords: x ∈ [0,1] left→right, y ∈ [0,1] top→bottom.
     'Lift' = wrist y decreasing (moving toward top of frame).
     'Place' = wrist y increasing (moving toward bottom of frame).
     """
-    dy = pos[1] - prev_pos[1]   # positive = moving down in image
+    dy = pos[1] - prev_pos[1]
     dx_mag = abs(pos[0] - prev_pos[0])
-    moving = vel > 0.02          # normalized velocity threshold
+    moving = vel > 0.02
 
-    if gripper < GRIPPER_OPEN_THRESH and prev_gripper < GRIPPER_OPEN_THRESH:
+    if gripper < gripper_open and prev_gripper < gripper_open:
         if moving:
             return PrimitiveType.REACH
         return PrimitiveType.UNKNOWN
 
-    if gripper > GRIPPER_CLOSE_THRESH and prev_gripper < GRIPPER_CLOSE_THRESH:
+    if gripper > gripper_close and prev_gripper < gripper_close:
         return PrimitiveType.GRASP
 
-    if gripper > GRIPPER_CLOSE_THRESH:
-        if dy < -0.01 and moving:       # moving up
+    if gripper > gripper_close:
+        if dy < -0.01 and moving:
             return PrimitiveType.LIFT
-        if dy > 0.01 and moving:        # moving down
+        if dy > 0.01 and moving:
             return PrimitiveType.PLACE
         if dx_mag > 0.01 and moving:
             return PrimitiveType.TRANSPORT
-        return PrimitiveType.TRANSPORT  # stationary grasp → still transport
+        return PrimitiveType.TRANSPORT
 
-    if gripper < GRIPPER_OPEN_THRESH and prev_gripper > GRIPPER_CLOSE_THRESH:
+    if gripper < gripper_open and prev_gripper > gripper_close:
         return PrimitiveType.RETRACT
 
     return PrimitiveType.UNKNOWN
@@ -101,6 +101,16 @@ def _merge_segments(labels: list[PrimitiveType], min_len: int) -> list[tuple[int
     return spans
 
 
+def _adaptive_thresholds(gripper: np.ndarray) -> tuple[float, float]:
+    """Compute close/open thresholds relative to observed range."""
+    g_min = float(np.percentile(gripper, 10))
+    g_max = float(np.percentile(gripper, 90))
+    span = max(g_max - g_min, 0.05)
+    close = g_min + span * 0.65
+    open_ = g_min + span * 0.35
+    return close, open_
+
+
 def segment(trajectory: Trajectory) -> list[Segment]:
     """Decompose trajectory into a list of primitive Segments."""
     pts = trajectory.points
@@ -109,8 +119,26 @@ def segment(trajectory: Trajectory) -> list[Segment]:
         return []
 
     positions = trajectory.positions()
-    gripper = _smooth(trajectory.gripper_states())
+    gripper_raw = trajectory.gripper_states()
+    confidences = trajectory.confidences()
+    gripper = _smooth(gripper_raw)
     velocities = _smooth(trajectory.velocities())
+
+    # Interpolate positions for zero-confidence frames so metrics aren't trashed
+    for i in range(n):
+        if confidences[i] == 0:
+            # find nearest detected neighbors
+            prev_i = next((j for j in range(i - 1, -1, -1) if confidences[j] > 0), None)
+            next_i = next((j for j in range(i + 1, n) if confidences[j] > 0), None)
+            if prev_i is not None and next_i is not None:
+                alpha = (i - prev_i) / (next_i - prev_i)
+                positions[i] = (1 - alpha) * positions[prev_i] + alpha * positions[next_i]
+            elif prev_i is not None:
+                positions[i] = positions[prev_i]
+            elif next_i is not None:
+                positions[i] = positions[next_i]
+
+    gripper_close, gripper_open = _adaptive_thresholds(gripper)
 
     labels: list[PrimitiveType] = [PrimitiveType.UNKNOWN]
     for i in range(1, n):
@@ -121,6 +149,8 @@ def segment(trajectory: Trajectory) -> list[Segment]:
             prev_gripper=float(gripper[i - 1]),
             vel=float(velocities[i]),
             z_up_bias=float(positions[i - 1][1] - positions[i][1]),
+            gripper_close=gripper_close,
+            gripper_open=gripper_open,
         )
         labels.append(lbl)
 

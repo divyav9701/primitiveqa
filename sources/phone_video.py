@@ -56,7 +56,7 @@ def _draw_connections(frame: np.ndarray, landmarks, connections) -> None:
     pts = [(int(lm.x * w), int(lm.y * h)) for lm in landmarks]
 
     for conn in connections:
-        a, b = conn
+        a, b = conn.start, conn.end
         cv2.line(frame, pts[a], pts[b], (0, 220, 100), 2)
     for pt in pts:
         cv2.circle(frame, pt, 4, (255, 255, 255), -1)
