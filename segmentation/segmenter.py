@@ -1,4 +1,4 @@
-"""Segment a Trajectory into manipulation primitives using heuristics."""
+"""Segment a Trajectory into manipulation primitives using motion direction."""
 
 from __future__ import annotations
 
@@ -7,62 +7,84 @@ from scipy.signal import savgol_filter
 
 from core.types import PrimitiveType, Segment, Trajectory
 
-# Thresholds — adaptive, computed per-trajectory
-MIN_SEGMENT_FRAMES = 3        # discard segments shorter than this
+MIN_SEGMENT_FRAMES = 3
 
 
 def _smooth(arr: np.ndarray, window: int = 5) -> np.ndarray:
-    if len(arr) < window:
+    n = len(arr)
+    if n < 4:
         return arr.copy()
-    return savgol_filter(arr, window_length=min(window, len(arr) | 1), polyorder=2)
+    w = min(window, n if n % 2 == 1 else n - 1)
+    if w < 3:
+        return arr.copy()
+    return savgol_filter(arr, window_length=w, polyorder=2)
+
+
+def _interpolate_gaps(positions: np.ndarray, confidences: np.ndarray) -> np.ndarray:
+    """Fill zero-confidence frames by linear interpolation from neighbours."""
+    pos = positions.copy()
+    n = len(pos)
+    for i in range(n):
+        if confidences[i] > 0:
+            continue
+        prev_i = next((j for j in range(i - 1, -1, -1) if confidences[j] > 0), None)
+        next_i = next((j for j in range(i + 1, n)     if confidences[j] > 0), None)
+        if prev_i is not None and next_i is not None:
+            alpha = (i - prev_i) / (next_i - prev_i)
+            pos[i] = (1 - alpha) * pos[prev_i] + alpha * pos[next_i]
+        elif prev_i is not None:
+            pos[i] = pos[prev_i]
+        elif next_i is not None:
+            pos[i] = pos[next_i]
+    return pos
 
 
 def _classify_frame(
-    pos: np.ndarray,
-    prev_pos: np.ndarray,
-    gripper: float,
-    prev_gripper: float,
-    vel: float,
-    z_up_bias: float,
-    gripper_close: float,
-    gripper_open: float,
+    dy: float,       # change in wrist y (positive = moving DOWN in image)
+    dx: float,       # change in wrist x
+    speed: float,    # magnitude of wrist movement per frame
+    seq_pos: float,  # position in trajectory 0=start 1=end
 ) -> PrimitiveType:
     """
-    Heuristic single-frame primitive label with adaptive thresholds.
+    Motion-direction classifier — does NOT use gripper state.
 
-    MediaPipe wrist coords: x ∈ [0,1] left→right, y ∈ [0,1] top→bottom.
-    'Lift' = wrist y decreasing (moving toward top of frame).
-    'Place' = wrist y increasing (moving toward bottom of frame).
+    MediaPipe y: 0=top, 1=bottom of frame.
+    Lift  = wrist moves UP   → dy < 0
+    Place = wrist moves DOWN → dy > 0
     """
-    dy = pos[1] - prev_pos[1]
-    dx_mag = abs(pos[0] - prev_pos[0])
-    moving = vel > 0.02
 
-    if gripper < gripper_open and prev_gripper < gripper_open:
-        if moving:
-            return PrimitiveType.REACH
+    SPEED_STILL   = 0.005   # nearly stationary
+    SPEED_MOVING  = 0.012   # clearly moving
+    VERT_BIAS     = 1.4     # vertical must dominate by this factor to call lift/place
+
+    if speed < SPEED_STILL:
+        # Stationary — grasp if mid-sequence, otherwise unknown
+        if 0.15 < seq_pos < 0.85:
+            return PrimitiveType.GRASP
         return PrimitiveType.UNKNOWN
 
-    if gripper > gripper_close and prev_gripper < gripper_close:
-        return PrimitiveType.GRASP
+    # Determine dominant direction
+    vert_dom = abs(dy) > abs(dx) * (1 / VERT_BIAS)
 
-    if gripper > gripper_close:
-        if dy < -0.01 and moving:
+    if vert_dom and speed > SPEED_MOVING:
+        if dy < -0.008:
             return PrimitiveType.LIFT
-        if dy > 0.01 and moving:
+        if dy > 0.008:
             return PrimitiveType.PLACE
-        if dx_mag > 0.01 and moving:
-            return PrimitiveType.TRANSPORT
-        return PrimitiveType.TRANSPORT
 
-    if gripper < gripper_open and prev_gripper > gripper_close:
-        return PrimitiveType.RETRACT
+    if speed > SPEED_MOVING:
+        if seq_pos < 0.25:
+            return PrimitiveType.REACH
+        if seq_pos > 0.75:
+            return PrimitiveType.RETRACT
+        return PrimitiveType.TRANSPORT
 
     return PrimitiveType.UNKNOWN
 
 
-def _merge_segments(labels: list[PrimitiveType], min_len: int) -> list[tuple[int, int, PrimitiveType]]:
-    """Merge consecutive same-label frames into (start, end, label) spans, drop short ones."""
+def _merge_segments(
+    labels: list[PrimitiveType], min_len: int
+) -> list[tuple[int, int, PrimitiveType]]:
     if not labels:
         return []
 
@@ -74,16 +96,15 @@ def _merge_segments(labels: list[PrimitiveType], min_len: int) -> list[tuple[int
             start = i
     spans.append((start, len(labels), labels[start]))
 
-    # Drop segments shorter than min_len by merging into neighbors
-    merged = True
-    while merged:
-        merged = False
-        new_spans = []
+    # Absorb short spans into their longer neighbour
+    changed = True
+    while changed:
+        changed = False
+        new_spans: list[tuple[int, int, PrimitiveType]] = []
         i = 0
         while i < len(spans):
             s, e, lbl = spans[i]
             if (e - s) < min_len and len(spans) > 1:
-                # absorb into previous if exists, else next
                 if new_spans:
                     ps, pe, pl = new_spans[-1]
                     new_spans[-1] = (ps, e, pl)
@@ -92,7 +113,7 @@ def _merge_segments(labels: list[PrimitiveType], min_len: int) -> list[tuple[int
                     spans[i + 1] = (s, ne, nl)
                     i += 1
                     continue
-                merged = True
+                changed = True
             else:
                 new_spans.append((s, e, lbl))
             i += 1
@@ -101,58 +122,30 @@ def _merge_segments(labels: list[PrimitiveType], min_len: int) -> list[tuple[int
     return spans
 
 
-def _adaptive_thresholds(gripper: np.ndarray) -> tuple[float, float]:
-    """Compute close/open thresholds relative to observed range."""
-    g_min = float(np.percentile(gripper, 10))
-    g_max = float(np.percentile(gripper, 90))
-    span = max(g_max - g_min, 0.05)
-    close = g_min + span * 0.65
-    open_ = g_min + span * 0.35
-    return close, open_
-
-
 def segment(trajectory: Trajectory) -> list[Segment]:
-    """Decompose trajectory into a list of primitive Segments."""
+    """Decompose trajectory into primitive Segments."""
     pts = trajectory.points
     n = len(pts)
     if n < 2:
         return []
 
-    positions = trajectory.positions()
-    gripper_raw = trajectory.gripper_states()
     confidences = trajectory.confidences()
-    gripper = _smooth(gripper_raw)
-    velocities = _smooth(trajectory.velocities())
+    raw_positions = trajectory.positions()
+    positions = _interpolate_gaps(raw_positions, confidences)
 
-    # Interpolate positions for zero-confidence frames so metrics aren't trashed
-    for i in range(n):
-        if confidences[i] == 0:
-            # find nearest detected neighbors
-            prev_i = next((j for j in range(i - 1, -1, -1) if confidences[j] > 0), None)
-            next_i = next((j for j in range(i + 1, n) if confidences[j] > 0), None)
-            if prev_i is not None and next_i is not None:
-                alpha = (i - prev_i) / (next_i - prev_i)
-                positions[i] = (1 - alpha) * positions[prev_i] + alpha * positions[next_i]
-            elif prev_i is not None:
-                positions[i] = positions[prev_i]
-            elif next_i is not None:
-                positions[i] = positions[next_i]
-
-    gripper_close, gripper_open = _adaptive_thresholds(gripper)
+    # Smooth wrist x and y independently
+    xs = _smooth(positions[:, 0])
+    ys = _smooth(positions[:, 1])
 
     labels: list[PrimitiveType] = [PrimitiveType.UNKNOWN]
+
     for i in range(1, n):
-        lbl = _classify_frame(
-            pos=positions[i],
-            prev_pos=positions[i - 1],
-            gripper=float(gripper[i]),
-            prev_gripper=float(gripper[i - 1]),
-            vel=float(velocities[i]),
-            z_up_bias=float(positions[i - 1][1] - positions[i][1]),
-            gripper_close=gripper_close,
-            gripper_open=gripper_open,
-        )
-        labels.append(lbl)
+        dy    = float(ys[i] - ys[i - 1])
+        dx    = float(xs[i] - xs[i - 1])
+        speed = float(np.sqrt(dx ** 2 + dy ** 2))
+        seq_pos = i / (n - 1)
+
+        labels.append(_classify_frame(dy, dx, speed, seq_pos))
 
     spans = _merge_segments(labels, MIN_SEGMENT_FRAMES)
 
@@ -163,7 +156,7 @@ def segment(trajectory: Trajectory) -> list[Segment]:
             start_idx=start,
             end_idx=end,
             positions=positions[start:end],
-            gripper=gripper[start:end],
+            gripper=trajectory.gripper_states()[start:end],
         ))
 
     return segments
