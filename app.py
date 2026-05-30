@@ -202,9 +202,7 @@ def analyze_batch(video_files: list | None, api_key: str, progress=gr.Progress()
 # ── UI ───────────────────────────────────────────────────────────────────────
 
 def build_ui() -> gr.Blocks:
-    example_files = sorted(EXAMPLES_DIR.glob("*.mp4")) + sorted(EXAMPLES_DIR.glob("*.mov"))
-
-    with gr.Blocks(title="PrimitiveQA") as demo:  # noqa: SIM117
+    with gr.Blocks(title="PrimitiveQA") as demo:
         gr.Markdown(
             "# PrimitiveQA\n"
             "**The quality layer for physical AI data.** "
@@ -225,12 +223,6 @@ def build_ui() -> gr.Blocks:
                 with gr.Row():
                     with gr.Column(scale=1):
                         video_in = gr.Video(label="Upload manipulation video", sources=["upload"])
-                        if example_files:
-                            gr.Examples(
-                                examples=[[str(p)] for p in example_files[:3]],
-                                inputs=[video_in],
-                                label="Example clips",
-                            )
                         run_btn = gr.Button("Analyze", variant="primary", size="lg")
 
                     with gr.Column(scale=1):
@@ -300,4 +292,5 @@ def build_ui() -> gr.Blocks:
 
 if __name__ == "__main__":
     app = build_ui()
+    app.queue()
     app.launch(share=False, show_error=True)
