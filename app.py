@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 import gradio as gr
 import pandas as pd
+import plotly.io as pio
 
 import pipeline as pqa
 from core.types import AnalysisResult, PrimitiveType
@@ -20,6 +23,11 @@ from visualization.dataset_charts import (
     score_distribution,
     summary_table,
 )
+
+
+def _fig_to_html(fig) -> str:
+    """Convert a Plotly figure to an embeddable HTML string."""
+    return pio.to_html(fig, full_html=False, include_plotlyjs="cdn", config={"responsive": True})
 
 EXAMPLES_DIR = Path(__file__).parent / "examples"
 OUTPUT_DIR = Path(__file__).parent / "output"
@@ -123,12 +131,17 @@ def analyze_single(video_path: str | None, api_key: str) -> tuple:
         f'<div style="font-size:2rem;font-weight:bold;text-align:center;color:{color}">'
         f"Composite: {q.composite:.0%}</div>"
     )
+    # Copy annotated video to Gradio's temp dir so it can serve it
+    src = Path(result.annotated_video_path).resolve()
+    tmp = Path(tempfile.mktemp(suffix=".mp4"))
+    shutil.copy2(src, tmp)
+    annotated = str(tmp)
     return (
-        result.annotated_video_path,
+        annotated,
         score_html,
-        quality_radar(result),
-        primitive_timeline(result.segments, len(result.trajectory)),
-        per_segment_bars(result.segments),
+        _fig_to_html(quality_radar(result)),
+        _fig_to_html(primitive_timeline(result.segments, len(result.trajectory))),
+        _fig_to_html(per_segment_bars(result.segments)),
         _format_primitive_sequence(result),
         _format_vlm(result),
     )
@@ -168,9 +181,9 @@ def analyze_batch(video_files: list | None, api_key: str, progress=gr.Progress()
     return (
         health_html,
         missing_primitives_warning(results),
-        dataset_radar(results),
-        primitive_coverage_chart(results),
-        score_distribution(results, names),
+        _fig_to_html(dataset_radar(results)),
+        _fig_to_html(primitive_coverage_chart(results)),
+        _fig_to_html(score_distribution(results, names)),
         df,
         str(export_path),
     )
@@ -181,7 +194,7 @@ def analyze_batch(video_files: list | None, api_key: str, progress=gr.Progress()
 def build_ui() -> gr.Blocks:
     example_files = sorted(EXAMPLES_DIR.glob("*.mp4")) + sorted(EXAMPLES_DIR.glob("*.mov"))
 
-    with gr.Blocks(title="PrimitiveQA") as demo:
+    with gr.Blocks(title="PrimitiveQA") as demo:  # noqa: SIM117
         gr.Markdown(
             "# PrimitiveQA\n"
             "**The quality layer for physical AI data.** "
@@ -215,10 +228,10 @@ def build_ui() -> gr.Blocks:
                         score_display = gr.HTML()
 
                 with gr.Row():
-                    radar_plot   = gr.Plot(label="Quality radar")
-                    timeline_plot = gr.Plot(label="Primitive timeline")
+                    radar_plot   = gr.HTML(label="Quality radar")
+                    timeline_plot = gr.HTML(label="Primitive timeline")
 
-                bars_plot   = gr.Plot(label="Per-segment quality breakdown")
+                bars_plot   = gr.HTML(label="Per-segment quality breakdown")
                 prim_display = gr.HTML(label="Detected primitive sequence")
                 gr.Markdown("### Claude task evaluation")
                 vlm_display = gr.HTML()
@@ -251,10 +264,10 @@ def build_ui() -> gr.Blocks:
                         missing_display = gr.HTML()
 
                 with gr.Row():
-                    dataset_radar_plot   = gr.Plot(label="Average quality radar")
-                    coverage_plot        = gr.Plot(label="Primitive coverage")
+                    dataset_radar_plot   = gr.HTML(label="Average quality radar")
+                    coverage_plot        = gr.HTML(label="Primitive coverage")
 
-                dist_plot    = gr.Plot(label="Per-clip composite scores")
+                dist_plot    = gr.HTML(label="Per-clip composite scores")
                 summary_df   = gr.Dataframe(label="Per-clip summary", wrap=True)
                 export_file  = gr.File(label="Download dataset_health.json")
 
@@ -277,4 +290,4 @@ def build_ui() -> gr.Blocks:
 
 if __name__ == "__main__":
     app = build_ui()
-    app.launch(share=False)
+    app.launch(share=False, show_error=True)
