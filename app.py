@@ -8,9 +8,10 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import base64
+
 import gradio as gr
 import pandas as pd
-import plotly.io as pio
 
 import pipeline as pqa
 from core.types import AnalysisResult, PrimitiveType
@@ -25,9 +26,18 @@ from visualization.dataset_charts import (
 )
 
 
-def _fig_to_html(fig) -> str:
-    """Convert a Plotly figure to an embeddable HTML string."""
-    return pio.to_html(fig, full_html=False, include_plotlyjs="cdn", config={"responsive": True})
+def _fig_to_html(fig, width: int = 680, height: int = 360) -> str:
+    """Render a Plotly figure to a base64 PNG and return an <img> HTML tag.
+
+    This avoids Gradio 6's HTML sanitiser stripping <script> tags (which
+    breaks plotly.io.to_html CDN embeds) and the broken gr.Plot renderer.
+    """
+    img_bytes = fig.to_image(format="png", width=width, height=height, scale=2)
+    b64 = base64.b64encode(img_bytes).decode()
+    return (
+        f'<img src="data:image/png;base64,{b64}" '
+        f'style="width:100%;border-radius:6px;display:block">'
+    )
 
 EXAMPLES_DIR = Path(__file__).parent / "examples"
 OUTPUT_DIR = Path(__file__).parent / "output"
