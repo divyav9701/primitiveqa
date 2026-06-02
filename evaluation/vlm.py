@@ -105,22 +105,36 @@ def evaluate(video_path: str | Path, api_key: str | None = None) -> VLMEvaluatio
         "text": USER_PROMPT.format(n=len(frame_bytes)),
     })
 
-    client = anthropic.Anthropic(api_key=key)
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=512,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": content}],
-    )
+    # The API call and JSON parse are best-effort: a transient API error (502,
+    # rate limit), a bad key, or a malformed response must not crash the whole
+    # analysis — Claude evaluation is optional, so we just skip it on failure.
+    try:
+        client = anthropic.Anthropic(api_key=key, max_retries=2)
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": content}],
+        )
 
-    raw = response.content[0].text.strip()
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+        raw = response.content[0].text.strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
 
-    data = json.loads(raw)
+        data = json.loads(raw)
+    except Exception as e:  # noqa: BLE001 — any API/parse failure → skip, don't crash
+        return VLMEvaluation(
+            task_description="(Claude evaluation unavailable)",
+            task_success=False,
+            confidence=0.0,
+            primitives_observed=[],
+            notes=f"Claude call failed, scores still computed: {type(e).__name__}: {e}",
+            skipped=True,
+        )
+
     return VLMEvaluation(
         task_description=data.get("task_description", ""),
         task_success=bool(data.get("task_success", False)),

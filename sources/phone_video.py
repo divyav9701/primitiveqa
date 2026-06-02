@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import shutil
+import subprocess
 from pathlib import Path
 
 import cv2
@@ -15,6 +17,34 @@ from mediapipe.tasks.python.components import containers as mp_containers
 from core.types import Trajectory, TrajectoryPoint
 
 MODEL_PATH = Path(__file__).parent.parent / "models" / "hand_landmarker.task"
+
+
+def _reencode_h264(src: Path) -> Path:
+    """Re-encode an OpenCV (mp4v) clip to browser-playable H.264, in place.
+
+    HTML5 <video> (and Gradio's player) can't decode mp4v, so the annotated
+    overlay shows a NaN duration and won't play. If ffmpeg is unavailable we
+    keep the original file rather than fail the pipeline.
+    """
+    ffmpeg = shutil.which("ffmpeg") or "/opt/anaconda3/bin/ffmpeg"
+    if not Path(ffmpeg).exists():
+        return src
+    dst = src.parent / f"{src.stem}_h264.mp4"
+    # Try encoders in order — builds vary (libx264 is often absent; macOS ships
+    # the hardware videotoolbox encoder; libopenh264 is a common fallback).
+    for encoder in ("libx264", "h264_videotoolbox", "libopenh264"):
+        try:
+            subprocess.run(
+                [ffmpeg, "-y", "-loglevel", "error", "-i", str(src),
+                 "-c:v", encoder, "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                 "-an", str(dst)],
+                check=True,
+            )
+        except (subprocess.CalledProcessError, OSError):
+            continue
+        if dst.exists() and dst.stat().st_size > 0:
+            return dst
+    return src
 
 # Landmark indices (MediaPipe 21-point hand model)
 WRIST = 0
@@ -161,5 +191,7 @@ def process_video(
 
     cap.release()
     writer.release()
+
+    out_path = _reencode_h264(out_path)
 
     return Trajectory(points=points, source="phone_video", fps=target_fps), out_path

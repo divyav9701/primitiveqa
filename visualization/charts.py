@@ -56,16 +56,20 @@ def primitive_timeline(scored: list[ScoredSegment], total_frames: int) -> go.Fig
         color = PRIMITIVE_COLORS.get(seg.primitive, "#AAAAAA")
         label = seg.primitive.value.upper()
         q = round(ss.quality.composite, 2)
+        # Only label segments wide enough to fit text; the rest rely on hover,
+        # so thin slivers don't pile overlapping text on top of each other.
+        wide_enough = seg.duration_frames() >= max(total_frames * 0.07, 1)
         fig.add_trace(go.Bar(
             x=[seg.duration_frames()],
             y=["Primitives"],
             base=[seg.start_idx],
             orientation="h",
-            marker_color=color,
+            marker=dict(color=color, line=dict(color="white", width=1)),
             name=label,
-            text=f"{label}<br>Q={q}",
+            text=(label if wide_enough else ""),
             textposition="inside",
             insidetextanchor="middle",
+            textfont=dict(size=10),
             hovertemplate=f"<b>{label}</b><br>Frames {seg.start_idx}–{seg.end_idx}<br>Quality: {q}<extra></extra>",
         ))
 
@@ -84,10 +88,14 @@ def primitive_timeline(scored: list[ScoredSegment], total_frames: int) -> go.Fig
 
 def per_segment_bars(scored: list[ScoredSegment]) -> go.Figure:
     """Grouped bar chart of quality dimensions per segment."""
+    # Drop UNKNOWN segments — they're noise and crowd the axis.
+    scored = [ss for ss in scored if ss.segment.primitive != PrimitiveType.UNKNOWN]
     if not scored:
         return go.Figure()
 
-    labels = [f"{ss.segment.primitive.value} ({ss.segment.start_idx}–{ss.segment.end_idx})" for ss in scored]
+    # Label each cluster by its frame range only (the timeline above already
+    # names the primitives), keeping the axis readable.
+    labels = [f"{ss.segment.start_idx}–{ss.segment.end_idx}" for ss in scored]
     metrics = {
         "Smoothness":      [ss.quality.smoothness for ss in scored],
         "Path Efficiency": [ss.quality.path_efficiency for ss in scored],
@@ -103,10 +111,11 @@ def per_segment_bars(scored: list[ScoredSegment]) -> go.Figure:
     fig.update_layout(
         barmode="group",
         yaxis=dict(range=[0, 1], title="Score"),
-        xaxis=dict(tickangle=-20),
+        xaxis=dict(title="Frame range", tickangle=-45, type="category"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        height=300,
-        margin=dict(l=10, r=10, t=40, b=60),
+        bargap=0.25,
+        height=340,
+        margin=dict(l=10, r=10, t=40, b=70),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
     )

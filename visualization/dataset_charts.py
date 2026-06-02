@@ -70,9 +70,9 @@ def summary_table(results: list[AnalysisResult], names: list[str]) -> pd.DataFra
         })
         q = r.overall_quality
         rows.append({
+            "Composite": round(q.composite, 2),
             "Clip": name,
             "Detection": det_pct,
-            "Composite": round(q.composite, 2),
             "Smoothness": round(q.smoothness, 2),
             "Path Eff.": round(q.path_efficiency, 2),
             "Decisive": round(q.decisiveness, 2),
@@ -116,9 +116,10 @@ def primitive_coverage_chart(results: list[AnalysisResult]) -> go.Figure:
     coverage = primitive_coverage_scores(results)
     labels = [p.value.capitalize() for p in ALL_PRIMITIVES]
     values = [coverage[p] * 100 for p in ALL_PRIMITIVES]
+    # Red/yellow/green by how many clips contain each primitive.
     colors = [
-        OK_COLOR if coverage[p] > 0.3 else (
-            "#E9C46A" if coverage[p] > 0 else WARN_COLOR
+        OK_COLOR if coverage[p] >= 0.6 else (
+            "#E9C46A" if coverage[p] >= 0.3 else WARN_COLOR
         )
         for p in ALL_PRIMITIVES
     ]
@@ -181,13 +182,13 @@ def missing_primitives_warning(results: list[AnalysisResult]) -> str:
     low = [p.value for p in ALL_PRIMITIVES if 0 < coverage[p] < 0.3]
 
     if not missing and not low:
-        return f'<span style="color:{OK_COLOR}">✅ All 6 primitives represented in the dataset.</span>'
+        return f'<span style="color:{OK_COLOR};font-weight:600">All 6 primitives represented in the dataset.</span>'
 
     parts = []
     if missing:
         m = ", ".join(missing)
-        parts.append(f'<span style="color:{WARN_COLOR}">❌ Missing primitives: <b>{m}</b> — no examples in dataset</span>')
+        parts.append(f'<span style="color:{WARN_COLOR};font-weight:600">Missing primitives: <b>{m}</b> — no examples in dataset</span>')
     if low:
         l = ", ".join(low)
-        parts.append(f'<span style="color:#E9C46A">⚠️ Under-represented: <b>{l}</b> — fewer than 30% of clips</span>')
+        parts.append(f'<span style="color:#C9A227;font-weight:600">Under-represented: <b>{l}</b> — fewer than 30% of clips</span>')
     return "<br>".join(parts)
