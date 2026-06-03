@@ -624,16 +624,36 @@ def analyze_batch(video_files: list | None, api_key: str, progress=gr.Progress()
 
 AUTOPLAY_JS = """
 () => {
+  const RATE = 0.4;
+
+  // Gradio 6's Svelte video component keeps a reactive signal initialised
+  // to 1 and writes video.playbackRate = 1 on every re-render, overriding
+  // a plain assignment. Fix: intercept the property on the element itself
+  // via Object.defineProperty so every future write is ignored and the
+  // native setter always receives our rate.
+  function lockRate(v) {
+    if (!v || v._pqaLocked) return;
+    v._pqaLocked = true;
+    const native = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'playbackRate');
+    Object.defineProperty(v, 'playbackRate', {
+      configurable: true,
+      enumerable:   true,
+      get: ()    => RATE,
+      set: ()    => native.set.call(v, RATE),   // ignore caller's value
+    });
+    native.set.call(v, RATE);   // apply immediately
+  }
+
   setInterval(() => {
 
-    // ── 1. Slow-loop the result video (0.4x = deliberate review speed) ────
+    // ── 1. Slow-loop the result video ─────────────────────────────────────
     const vc = document.getElementById('pqa-result-video');
     if (vc) {
       const v = vc.querySelector('video');
       if (v) {
-        v.muted        = true;
-        v.loop         = true;
-        v.playbackRate = 0.4;
+        lockRate(v);
+        v.muted = true;
+        v.loop  = true;
         if (v.src && v.paused && v.readyState >= 2) v.play().catch(() => {});
       }
     }
@@ -641,7 +661,6 @@ AUTOPLAY_JS = """
     // ── 2. Auto-scroll the Claude prose panel ─────────────────────────────
     const host = document.getElementById('pqa-vlm-display');
     if (host) {
-      // Scroll the host wrapper and every inner div that overflows
       host.scrollTop = host.scrollHeight;
       host.querySelectorAll('div').forEach(d => {
         if (d.scrollHeight > d.clientHeight + 4) d.scrollTop = d.scrollHeight;
