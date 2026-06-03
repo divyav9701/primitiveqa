@@ -160,7 +160,7 @@ def prose_to_html(text: str, cursor: bool = True) -> str:
         body += '<span style="color:#6366f1;animation:blink 1s step-end infinite">▌</span>'
     return (
         '<div style="background:#0f172a;border-radius:10px;padding:18px 20px;'
-        'min-height:200px;max-height:420px;overflow-y:auto">'
+        'min-height:400px;overflow-y:visible">'
         '<div style="font-size:0.66rem;font-weight:700;text-transform:uppercase;'
         'letter-spacing:.1em;color:#334155;margin-bottom:12px">Claude · reasoning</div>'
         f'<div style="font-size:0.84rem;color:#cbd5e1;line-height:1.75">{body}</div>'

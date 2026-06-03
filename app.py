@@ -435,7 +435,7 @@ def analyze_single(video_path: str | None, api_key: str):
     def _dark_status(msg: str) -> str:
         return (
             '<div style="background:#0f172a;border-radius:10px;padding:20px;'
-            'min-height:200px;display:flex;align-items:center;justify-content:center">'
+            'min-height:400px;display:flex;align-items:center;justify-content:center">'
             f'<span style="color:#94a3b8;font-size:0.82rem">{msg}</span></div>'
         )
 
@@ -756,7 +756,7 @@ def build_ui() -> gr.Blocks:
                         )
                         vlm_display = gr.HTML(
                             '<div style="background:#0f172a;border-radius:10px;'
-                            'padding:20px;min-height:200px;display:flex;'
+                            'padding:20px;min-height:400px;display:flex;'
                             'align-items:center;justify-content:center">'
                             '<span style="color:#475569;font-size:0.82rem">'
                             'Upload a video and click Analyze to see Claude\'s '
