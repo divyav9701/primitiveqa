@@ -608,8 +608,38 @@ def analyze_batch(video_files: list | None, api_key: str, progress=gr.Progress()
 
 # ── UI ───────────────────────────────────────────────────────────────────────
 
+AUTOPLAY_JS = """
+() => {
+  function play(v) {
+    if (!v || !v.src) return;
+    v.muted = true;
+    v.loop  = true;
+    v.play().catch(() => {});
+  }
+
+  function watch(containerId) {
+    const setup = () => {
+      const c = document.getElementById(containerId);
+      if (!c) return;
+      // Play any video already present
+      play(c.querySelector('video'));
+      // Watch for src changes (new analysis result) and new video elements
+      new MutationObserver(() => play(c.querySelector('video')))
+        .observe(c, { childList: true, subtree: true,
+                      attributes: true, attributeFilter: ['src'] });
+    };
+    // Try immediately, then retry after Gradio finishes mounting
+    setTimeout(setup, 600);
+    setTimeout(setup, 2000);
+  }
+
+  watch('pqa-result-video');
+}
+"""
+
+
 def build_ui() -> gr.Blocks:
-    with gr.Blocks(title="PrimitiveQA", css=APP_CSS) as demo:
+    with gr.Blocks(title="PrimitiveQA", css=APP_CSS, js=AUTOPLAY_JS) as demo:
 
         # ── Global style injection (tooltips need <style> tag) ────────────
         gr.HTML(
@@ -673,7 +703,7 @@ def build_ui() -> gr.Blocks:
                             value="Skeleton overlay",
                             label="Show",
                         )
-                        video_out = gr.Video(label="")
+                        video_out = gr.Video(label="", elem_id="pqa-result-video")
                         video_paths_state = gr.State()
 
                     # Right — Claude streams live next to the video
