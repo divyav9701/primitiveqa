@@ -751,14 +751,15 @@ AUTOPLAY_JS = """
       }
     }
 
-    // ── 2. Auto-scroll the Claude prose panel ─────────────────────────────
-    const host = document.getElementById('pqa-vlm-display');
-    if (host) {
+    // ── 2. Auto-scroll both the Claude prose panel and the chat display ───
+    ['pqa-vlm-display', 'pqa-chat-display'].forEach(id => {
+      const host = document.getElementById(id);
+      if (!host) return;
       host.scrollTop = host.scrollHeight;
       host.querySelectorAll('div').forEach(d => {
         if (d.scrollHeight > d.clientHeight + 4) d.scrollTop = d.scrollHeight;
       });
-    }
+    });
 
   }, 250);
 }
@@ -820,10 +821,36 @@ def build_ui() -> gr.Blocks:
                             elem_id="pqa-analyze-btn",
                         )
 
-                # ── Row 2: skeleton overlay  |  Claude reasoning (side-by-side) ──
+                # ── Row 2: Chat | Video | Claude  (three-column live view) ──
                 gr.HTML(_section("📹  Results"))
+                frames_state       = gr.State(value=[])
+                chat_history_state = gr.State(value=[])
+                video_paths_state  = gr.State()
+
                 with gr.Row(equal_height=True):
-                    # Left — result video
+
+                    # ── Left: chat ───────────────────────────────────────────
+                    with gr.Column(scale=1):
+                        gr.HTML(
+                            '<div style="font-size:0.68rem;font-weight:700;'
+                            'text-transform:uppercase;letter-spacing:.1em;'
+                            'color:#9ca3af;margin-bottom:6px">💬  Ask Claude</div>',
+                            container=False,
+                        )
+                        chat_display = gr.HTML(
+                            _render_chat([]),
+                            elem_id="pqa-chat-display",
+                        )
+                        with gr.Row():
+                            chat_input = gr.Textbox(
+                                placeholder="Ask anything about the video…",
+                                show_label=False,
+                                scale=4,
+                                container=False,
+                            )
+                            send_btn = gr.Button("↑", variant="primary", scale=1, min_width=48)
+
+                    # ── Middle: result video ─────────────────────────────────
                     with gr.Column(scale=1):
                         video_toggle = gr.Radio(
                             ["Skeleton overlay", "Original"],
@@ -831,16 +858,15 @@ def build_ui() -> gr.Blocks:
                             label="Show",
                         )
                         video_out = gr.Video(label="", elem_id="pqa-result-video")
-                        video_paths_state = gr.State()
 
-                    # Right — Claude streams live next to the video
+                    # ── Right: Claude streams live ───────────────────────────
                     with gr.Column(scale=1):
                         gr.HTML(
                             '<div style="display:flex;align-items:center;gap:8px;'
                             'margin-bottom:6px">'
                             '<span style="font-size:0.68rem;font-weight:700;'
                             'text-transform:uppercase;letter-spacing:.1em;color:#9ca3af">'
-                            '🤖  Claude video reasoning</span>'
+                            '🤖  Claude reasoning</span>'
                             '<span style="font-size:0.72rem;color:#c4b5fd;'
                             'background:rgba(139,92,246,0.12);border:1px solid '
                             'rgba(139,92,246,0.25);border-radius:12px;padding:1px 8px">'
@@ -852,12 +878,12 @@ def build_ui() -> gr.Blocks:
                             'padding:20px;min-height:400px;display:flex;'
                             'align-items:center;justify-content:center">'
                             '<span style="color:#475569;font-size:0.82rem">'
-                            'Upload a video and click Analyze to see Claude\'s '
-                            'primitive-by-primitive reasoning appear here live.</span></div>',
+                            'Click Analyze — Claude\'s reasoning streams here live.'
+                            '</span></div>',
                             elem_id="pqa-vlm-display",
                         )
 
-                # ── Score + metric pills (full width below) ──────────────────
+                # ── Score + metrics ──────────────────────────────────────────
                 gr.HTML(_section("📊  Quality score"))
                 score_display = gr.HTML(elem_classes=["pqa-host"])
                 gr.HTML(_metrics_legend(), elem_classes=["pqa-host"])
@@ -872,20 +898,6 @@ def build_ui() -> gr.Blocks:
                 # ── Primitive sequence ───────────────────────────────────────
                 gr.HTML(_section("🏷  Detected primitive sequence"))
                 prim_display = gr.HTML()
-
-                # ── Chat ─────────────────────────────────────────────────────
-                gr.HTML(_section("💬  Ask Claude about this video"))
-                frames_state = gr.State(value=[])
-                chat_history_state = gr.State(value=[])
-                chat_display = gr.HTML(_render_chat([]))
-                with gr.Row():
-                    chat_input = gr.Textbox(
-                        placeholder="e.g. Why did the transport score low?  /  Was the grasp clean?",
-                        show_label=False,
-                        scale=5,
-                        container=False,
-                    )
-                    send_btn = gr.Button("Send", variant="primary", scale=1, min_width=80)
 
                 run_btn.click(
                     fn=analyze_single,
