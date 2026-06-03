@@ -624,36 +624,31 @@ def analyze_batch(video_files: list | None, api_key: str, progress=gr.Progress()
 
 AUTOPLAY_JS = """
 () => {
-  // ── 1. Loop + autoplay the result video ────────────────────────────────
-  // Poll every 350 ms — Gradio sets video.src via JS property (not the HTML
-  // attribute), so MutationObserver on attributes misses it reliably.
   setInterval(() => {
-    const c = document.getElementById('pqa-result-video');
-    if (!c) return;
-    const v = c.querySelector('video');
-    if (!v) return;
-    v.muted = true;
-    v.loop  = true;
-    if (v.src && v.paused && v.readyState >= 2) v.play().catch(() => {});
-  }, 350);
 
-  // ── 2. Auto-scroll the Claude prose panel as text streams in ────────────
-  const scrollToBottom = () => {
-    const host = document.getElementById('pqa-vlm-display');
-    if (!host) return;
-    // The scrollable element is the div we render with overflow-y:auto
-    const scroller = host.querySelector('[style*="overflow-y"]') || host;
-    scroller.scrollTop = scroller.scrollHeight;
-  };
+    // ── 1. Slow-loop the result video (0.4x = deliberate review speed) ────
+    const vc = document.getElementById('pqa-result-video');
+    if (vc) {
+      const v = vc.querySelector('video');
+      if (v) {
+        v.muted        = true;
+        v.loop         = true;
+        v.playbackRate = 0.4;
+        if (v.src && v.paused && v.readyState >= 2) v.play().catch(() => {});
+      }
+    }
 
-  const setupScroll = () => {
+    // ── 2. Auto-scroll the Claude prose panel ─────────────────────────────
     const host = document.getElementById('pqa-vlm-display');
-    if (!host) return;
-    new MutationObserver(scrollToBottom)
-      .observe(host, { childList: true, subtree: true, characterData: true });
-  };
-  setTimeout(setupScroll,  800);
-  setTimeout(setupScroll, 2500);
+    if (host) {
+      // Scroll the host wrapper and every inner div that overflows
+      host.scrollTop = host.scrollHeight;
+      host.querySelectorAll('div').forEach(d => {
+        if (d.scrollHeight > d.clientHeight + 4) d.scrollTop = d.scrollHeight;
+      });
+    }
+
+  }, 250);
 }
 """
 
