@@ -295,6 +295,85 @@ def _skipped(note: str) -> VLMEvaluation:
     )
 
 
+CHAT_SYSTEM = """You are a robotics expert analysing a manipulation video.
+Frames from the video are provided in the first message.
+Answer questions concisely — reference timestamps and primitives where relevant.
+If asked about quality issues, be specific about what you observe."""
+
+
+def get_frames_b64(video_path: str | Path, n: int = N_SAMPLE_FRAMES) -> list[str]:
+    """Sample n frames and return as base64 strings (for storing in gr.State)."""
+    frame_bytes, _ = _sample_frames(video_path, n)
+    return [base64.standard_b64encode(fb).decode() for fb in frame_bytes]
+
+
+def stream_chat(
+    frames_b64: list[str],
+    history: list[dict],
+    message: str,
+    api_key: str | None = None,
+):
+    """Stream Claude's reply to a chat question about the video.
+
+    history is a list of {"role": "user"|"assistant", "content": str} dicts
+    built up by the UI. Frames are sent only in the first user message so
+    subsequent turns are cheap text-only calls.
+    """
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key or not frames_b64:
+        return
+
+    try:
+        import anthropic
+    except ImportError:
+        return
+
+    frame_imgs = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": b64,
+            },
+        }
+        for b64 in frames_b64
+    ]
+
+    # Reconstruct message array: frames live only in the first user turn
+    messages: list[dict] = []
+    for i, turn in enumerate(history):
+        if turn["role"] == "user" and i == 0:
+            messages.append({
+                "role": "user",
+                "content": frame_imgs + [{"type": "text", "text": turn["content"]}],
+            })
+        else:
+            messages.append({"role": turn["role"], "content": turn["content"]})
+
+    # Append the new user message (with frames if this is the very first exchange)
+    if not history:
+        messages.append({
+            "role": "user",
+            "content": frame_imgs + [{"type": "text", "text": message}],
+        })
+    else:
+        messages.append({"role": "user", "content": message})
+
+    try:
+        client = anthropic.Anthropic(api_key=key, max_retries=1)
+        with client.messages.stream(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            system=CHAT_SYSTEM,
+            messages=messages,
+        ) as s:
+            for text in s.text_stream:
+                yield text
+    except Exception:  # noqa: BLE001
+        return
+
+
 def evaluate(video_path: str | Path, api_key: str | None = None) -> VLMEvaluation:
     """Non-streaming convenience wrapper — collects the full stream then parses."""
     key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")

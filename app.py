@@ -15,7 +15,10 @@ import pandas as pd
 
 import pipeline as pqa
 from core.types import AnalysisResult, PrimitiveType, VLMEvaluation
-from evaluation.vlm import parse_response, stream_prose, prose_to_html
+from evaluation.vlm import (
+    get_frames_b64, parse_response,
+    prose_to_html, stream_chat, stream_prose,
+)
 from visualization.charts import per_segment_bars, primitive_timeline, quality_radar
 from visualization.dataset_charts import (
     dataset_health_score,
@@ -422,6 +425,51 @@ def _export_dataset_json(results: list[AnalysisResult], names: list[str]) -> Pat
     return out
 
 
+def _render_chat(history: list[dict], streaming: bool = False) -> str:
+    """Render conversation history as styled chat bubbles."""
+    import html as _html
+
+    if not history:
+        return (
+            '<div style="background:#0f172a;border-radius:10px;padding:28px;'
+            'text-align:center;color:#475569;font-size:0.83rem;min-height:120px;'
+            'display:flex;align-items:center;justify-content:center">'
+            'Ask Claude anything about the video — movement quality, specific moments, '
+            'what primitives you saw, whether the data is usable…'
+            '</div>'
+        )
+
+    def _md(text: str) -> str:
+        s = _html.escape(text)
+        s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+        s = re.sub(r"\*(.+?)\*", r'<i style="color:#94a3b8">\1</i>', s)
+        return s.replace("\n", "<br>")
+
+    html_parts = [
+        '<div style="background:#0f172a;border-radius:10px;padding:16px;'
+        'display:flex;flex-direction:column;gap:10px">'
+    ]
+    for i, turn in enumerate(history):
+        is_last = i == len(history) - 1
+        if turn["role"] == "user":
+            html_parts.append(
+                '<div style="display:flex;justify-content:flex-end">'
+                f'<div style="background:#312e81;color:#e0e7ff;padding:10px 14px;'
+                f'border-radius:10px 10px 2px 10px;max-width:82%;font-size:0.84rem;'
+                f'line-height:1.5">{_html.escape(turn["content"])}</div></div>'
+            )
+        else:
+            cursor = '<span style="color:#6366f1">▌</span>' if streaming and is_last else ""
+            html_parts.append(
+                '<div style="display:flex;justify-content:flex-start">'
+                f'<div style="background:#1e293b;color:#cbd5e1;padding:10px 14px;'
+                f'border-radius:10px 10px 10px 2px;max-width:90%;font-size:0.84rem;'
+                f'line-height:1.6">{_md(turn["content"])}{cursor}</div></div>'
+            )
+    html_parts.append("</div>")
+    return "".join(html_parts)
+
+
 # ── Single-video analysis ────────────────────────────────────────────────────
 
 _BLANK9 = (None, "Skeleton overlay", None, "", "", "", "", "", "")
@@ -445,6 +493,7 @@ def analyze_single(video_path: str | None, api_key: str):
         '<div style="color:#888;text-align:center">⏳ Tracking hand…</div>',
         "", "", "", "",
         _dark_status("⏳ Tracking hand with MediaPipe…"),
+        [],   # frames_state — empty until pipeline done
     )
 
     try:
@@ -478,10 +527,14 @@ def analyze_single(video_path: str | None, api_key: str):
         _dark_status("⏳ Asking Claude…")
     )
 
+    # Sample frames for chat (reused across the whole session for this video)
+    frames_b64 = get_frames_b64(video_path) if key else []
+
     yield (
         annotated, "Skeleton overlay", video_paths,
         score_html, radar_html, timeline_html, bars_html, prim_html,
         vlm_placeholder,
+        frames_b64,
     )
 
     if not key:
@@ -496,6 +549,7 @@ def analyze_single(video_path: str | None, api_key: str):
             annotated, "Skeleton overlay", video_paths,
             score_html, radar_html, timeline_html, bars_html, prim_html,
             prose_to_html(accumulated, cursor=True),
+            frames_b64,
         )
 
     # ── Phase 4: finalise — remove cursor ─────────────────────────────────────
@@ -508,7 +562,46 @@ def analyze_single(video_path: str | None, api_key: str):
         annotated, "Skeleton overlay", video_paths,
         score_html, radar_html, timeline_html, bars_html, prim_html,
         final_vlm,
+        frames_b64,
     )
+
+
+def chat_about_video(message: str, history: list, frames_b64: list, api_key: str):
+    """Generator: stream Claude's reply and update the chat display."""
+    if not message.strip():
+        yield history, _render_chat(history), ""
+        return
+
+    if not frames_b64:
+        new_history = history + [
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": "Analyze a video first, then ask me anything about it."},
+        ]
+        yield new_history, _render_chat(new_history), ""
+        return
+
+    key = api_key.strip() if api_key else ""
+    if not key:
+        new_history = history + [
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": "Add an Anthropic API key above to enable chat."},
+        ]
+        yield new_history, _render_chat(new_history), ""
+        return
+
+    # Show user message immediately
+    history = history + [{"role": "user", "content": message}]
+    yield history, _render_chat(history), ""
+
+    # Stream Claude's response
+    accumulated = ""
+    for chunk in stream_chat(frames_b64, history[:-1], message, api_key=key):
+        accumulated += chunk
+        streaming = history + [{"role": "assistant", "content": accumulated}]
+        yield streaming, _render_chat(streaming, streaming=True), ""
+
+    final = history + [{"role": "assistant", "content": accumulated or "…"}]
+    yield final, _render_chat(final, streaming=False), ""
 
 
 def _swap_video(choice: str, paths: dict | None):
@@ -673,7 +766,7 @@ AUTOPLAY_JS = """
 
 
 def build_ui() -> gr.Blocks:
-    with gr.Blocks(title="PrimitiveQA", css=APP_CSS, js=AUTOPLAY_JS) as demo:
+    with gr.Blocks(title="PrimitiveQA") as demo:
 
         # ── Global style injection (tooltips need <style> tag) ────────────
         gr.HTML(
@@ -780,18 +873,37 @@ def build_ui() -> gr.Blocks:
                 gr.HTML(_section("🏷  Detected primitive sequence"))
                 prim_display = gr.HTML()
 
+                # ── Chat ─────────────────────────────────────────────────────
+                gr.HTML(_section("💬  Ask Claude about this video"))
+                frames_state = gr.State(value=[])
+                chat_history_state = gr.State(value=[])
+                chat_display = gr.HTML(_render_chat([]))
+                with gr.Row():
+                    chat_input = gr.Textbox(
+                        placeholder="e.g. Why did the transport score low?  /  Was the grasp clean?",
+                        show_label=False,
+                        scale=5,
+                        container=False,
+                    )
+                    send_btn = gr.Button("Send", variant="primary", scale=1, min_width=80)
+
                 run_btn.click(
                     fn=analyze_single,
                     inputs=[video_in, api_key_box],
                     outputs=[video_out, video_toggle, video_paths_state,
                              score_display, radar_plot, timeline_plot,
-                             bars_plot, prim_display, vlm_display],
+                             bars_plot, prim_display, vlm_display, frames_state],
                 )
                 video_toggle.change(
                     fn=_swap_video,
                     inputs=[video_toggle, video_paths_state],
                     outputs=video_out,
                 )
+                # Wire chat — both button click and Enter key
+                chat_inputs  = [chat_input, chat_history_state, frames_state, api_key_box]
+                chat_outputs = [chat_history_state, chat_display, chat_input]
+                send_btn.click(fn=chat_about_video, inputs=chat_inputs, outputs=chat_outputs)
+                chat_input.submit(fn=chat_about_video, inputs=chat_inputs, outputs=chat_outputs)
 
             # ══ Tab 2: Dataset health ════════════════════════════════════════
             with gr.Tab("  Dataset health  "):
@@ -920,4 +1032,6 @@ if __name__ == "__main__":
         share=False,
         show_error=True,
         allowed_paths=[tempfile.gettempdir()],
+        css=APP_CSS,
+        js=AUTOPLAY_JS,
     )
