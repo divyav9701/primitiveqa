@@ -15,6 +15,7 @@ def run(
     video_path: str | Path,
     api_key: str | None = None,
     target_fps: float = 15.0,
+    skip_vlm: bool = False,
 ) -> AnalysisResult:
     video_path = Path(video_path)
 
@@ -26,7 +27,7 @@ def run(
 
     overall = overall_quality(scored, trajectory)
 
-    vlm_eval = evaluate(video_path, api_key=api_key)
+    vlm_eval = None if skip_vlm else evaluate(video_path, api_key=api_key)
 
     return AnalysisResult(
         trajectory=trajectory,

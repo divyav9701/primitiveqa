@@ -90,32 +90,9 @@ def _sample_frames(
     return frames, duration
 
 
-def _skipped(note: str) -> VLMEvaluation:
-    return VLMEvaluation(
-        task_description="",
-        task_success=False,
-        confidence=0.0,
-        primitives_observed=[],
-        notes=note,
-        skipped=True,
-    )
-
-
-def evaluate(video_path: str | Path, api_key: str | None = None) -> VLMEvaluation:
-    """Send timestamped frames to Claude and return a rich primitive-level breakdown."""
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-    if not key:
-        return _skipped("Set ANTHROPIC_API_KEY to enable Claude video reasoning.")
-
-    try:
-        import anthropic
-    except ImportError:
-        return _skipped("pip install anthropic")
-
+def _build_content(video_path: str | Path) -> tuple[list[dict], float]:
+    """Shared frame prep: returns (content_blocks, duration_sec)."""
     frame_bytes, duration = _sample_frames(video_path)
-    if not frame_bytes:
-        return _skipped("Video could not be read.")
-
     content: list[dict] = []
     for fb in frame_bytes:
         content.append({
@@ -130,26 +107,56 @@ def evaluate(video_path: str | Path, api_key: str | None = None) -> VLMEvaluatio
         "type": "text",
         "text": USER_PROMPT.format(n=len(frame_bytes), duration=duration),
     })
+    return content, duration
+
+
+def stream_raw(
+    video_path: str | Path, api_key: str | None = None
+):
+    """Generator that yields Claude's response text one chunk at a time.
+
+    Yields str chunks while streaming; when the stream is complete the
+    generator returns (StopIteration) — the caller can then call
+    parse_response() on the accumulated text to get a VLMEvaluation.
+    """
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        return
 
     try:
-        client = anthropic.Anthropic(api_key=key, max_retries=2)
-        response = client.messages.create(
+        import anthropic
+    except ImportError:
+        return
+
+    content, _ = _build_content(video_path)
+    if not content:
+        return
+
+    try:
+        client = anthropic.Anthropic(api_key=key, max_retries=1)
+        with client.messages.stream(
             model="claude-sonnet-4-6",
             max_tokens=1024,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": content}],
-        )
+        ) as stream:
+            for text in stream.text_stream:
+                yield text
+    except Exception:  # noqa: BLE001
+        return
 
-        raw = response.content[0].text.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
 
-        data = json.loads(raw)
-
-    except Exception as e:  # noqa: BLE001
-        return _skipped(f"Claude call failed: {type(e).__name__}: {e}")
+def parse_response(raw: str) -> VLMEvaluation:
+    """Parse accumulated Claude output into a VLMEvaluation."""
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return _skipped(f"Could not parse Claude response: {raw[:120]}")
 
     segments: list[VLMSegment] = []
     for s in data.get("segments", []):
@@ -173,3 +180,26 @@ def evaluate(video_path: str | Path, api_key: str | None = None) -> VLMEvaluatio
         segments=segments,
         skipped=False,
     )
+
+
+def _skipped(note: str) -> VLMEvaluation:
+    return VLMEvaluation(
+        task_description="",
+        task_success=False,
+        confidence=0.0,
+        primitives_observed=[],
+        notes=note,
+        skipped=True,
+    )
+
+
+def evaluate(video_path: str | Path, api_key: str | None = None) -> VLMEvaluation:
+    """Non-streaming convenience wrapper — collects the full stream then parses."""
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        return _skipped("Set ANTHROPIC_API_KEY to enable Claude video reasoning.")
+
+    accumulated = "".join(stream_raw(video_path, api_key=key))
+    if not accumulated:
+        return _skipped("Claude returned no output.")
+    return parse_response(accumulated)

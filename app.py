@@ -14,7 +14,8 @@ import gradio as gr
 import pandas as pd
 
 import pipeline as pqa
-from core.types import AnalysisResult, PrimitiveType
+from core.types import AnalysisResult, PrimitiveType, VLMEvaluation
+from evaluation.vlm import parse_response, stream_raw
 from visualization.charts import per_segment_bars, primitive_timeline, quality_radar
 from visualization.dataset_charts import (
     dataset_health_score,
@@ -334,14 +335,28 @@ def _export_dataset_json(results: list[AnalysisResult], names: list[str]) -> Pat
 
 # ── Single-video analysis ────────────────────────────────────────────────────
 
-def analyze_single(video_path: str | None, api_key: str) -> tuple:
+_BLANK9 = (None, "Skeleton overlay", None, "", "", "", "", "", "")
+
+
+def analyze_single(video_path: str | None, api_key: str):
+    """Generator — yields partial UI updates so Claude streams live."""
     if not video_path:
         raise gr.Error("Please upload a video first.")
+
+    # ── Phase 1: show "pipeline running" while MediaPipe tracks ─────────────
+    yield (
+        None, "Skeleton overlay", None,
+        '<div style="color:#888;text-align:center">⏳ Tracking hand…</div>',
+        "", "", "", "",
+        '<div style="color:#888;font-size:0.9rem"><i>Waiting for pipeline…</i></div>',
+    )
+
     try:
-        result = pqa.run(video_path, api_key=api_key or None)
+        result = pqa.run(video_path, api_key=None, skip_vlm=True)
     except Exception as e:
         raise gr.Error(f"Pipeline error: {e}")
 
+    # ── Phase 2: pipeline done — show all charts; start Claude streaming ─────
     q = result.overall_quality
     color = _quality_color(q.composite)
     score_html = (
@@ -349,24 +364,63 @@ def analyze_single(video_path: str | None, api_key: str) -> tuple:
         f"Composite: {q.composite:.0%}</div>"
         + _metrics_panel(q)
     )
-    # Copy both videos to Gradio's temp dir so it can serve them, and stash
-    # the two paths so the Show toggle can switch the player between them.
     annotated = str(Path(tempfile.mktemp(suffix=".mp4")))
     shutil.copy2(Path(result.annotated_video_path).resolve(), annotated)
     original = str(Path(tempfile.mktemp(suffix=".mp4")))
     shutil.copy2(Path(video_path).resolve(), original)
     video_paths = {"Skeleton overlay": annotated, "Original": original}
 
-    return (
-        annotated,
-        "Skeleton overlay",   # reset the Show toggle to match the player
-        video_paths,
-        score_html,
-        _fig_to_html(quality_radar(result)),
-        _fig_to_html(primitive_timeline(result.segments, len(result.trajectory)), width=520, height=240),
-        _fig_to_html(per_segment_bars(result.segments), width=900, height=380),
-        _format_primitive_sequence(result),
-        _format_vlm(result),
+    radar_html    = _fig_to_html(quality_radar(result))
+    timeline_html = _fig_to_html(primitive_timeline(result.segments, len(result.trajectory)), width=520, height=240)
+    bars_html     = _fig_to_html(per_segment_bars(result.segments), width=900, height=380)
+    prim_html     = _format_primitive_sequence(result)
+
+    key = api_key.strip() if api_key else ""
+    vlm_placeholder = (
+        '<div style="color:#888;font-size:0.9rem"><i>No API key — skipping Claude reasoning.</i></div>'
+        if not key else
+        '<div style="color:#888;font-size:0.9rem"><i>⏳ Asking Claude…</i></div>'
+    )
+
+    yield (
+        annotated, "Skeleton overlay", video_paths,
+        score_html, radar_html, timeline_html, bars_html, prim_html,
+        vlm_placeholder,
+    )
+
+    if not key:
+        return
+
+    # ── Phase 3: stream Claude token by token into the panel ─────────────────
+    accumulated = ""
+    stream_html_wrap = (
+        lambda t: (
+            '<div style="font-family:monospace;font-size:0.78rem;'
+            'background:#f8f8f8;border-radius:6px;padding:10px;'
+            'max-height:280px;overflow-y:auto;white-space:pre-wrap;'
+            'color:#333">' + t.replace("<", "&lt;").replace(">", "&gt;") + "▌</div>"
+        )
+    )
+    for chunk in stream_raw(video_path, api_key=key):
+        accumulated += chunk
+        yield (
+            annotated, "Skeleton overlay", video_paths,
+            score_html, radar_html, timeline_html, bars_html, prim_html,
+            stream_html_wrap(accumulated),
+        )
+
+    # ── Phase 4: parse and render final table ─────────────────────────────────
+    if accumulated:
+        vlm_eval = parse_response(accumulated)
+        result.vlm_eval = vlm_eval
+        final_vlm = _format_vlm(result)
+    else:
+        final_vlm = '<div style="color:#888;font-size:0.9rem"><i>Claude returned no output.</i></div>'
+
+    yield (
+        annotated, "Skeleton overlay", video_paths,
+        score_html, radar_html, timeline_html, bars_html, prim_html,
+        final_vlm,
     )
 
 
