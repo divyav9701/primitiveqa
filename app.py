@@ -418,12 +418,19 @@ def analyze_single(video_path: str | None, api_key: str):
     if not video_path:
         raise gr.Error("Please upload a video first.")
 
+    def _dark_status(msg: str) -> str:
+        return (
+            '<div style="background:#0f172a;border-radius:10px;padding:20px;'
+            'min-height:200px;display:flex;align-items:center;justify-content:center">'
+            f'<span style="color:#94a3b8;font-size:0.82rem">{msg}</span></div>'
+        )
+
     # ── Phase 1: show "pipeline running" while MediaPipe tracks ─────────────
     yield (
         None, "Skeleton overlay", None,
         '<div style="color:#888;text-align:center">⏳ Tracking hand…</div>',
         "", "", "", "",
-        '<div style="color:#888;font-size:0.9rem"><i>Waiting for pipeline…</i></div>',
+        _dark_status("⏳ Tracking hand with MediaPipe…"),
     )
 
     try:
@@ -452,9 +459,9 @@ def analyze_single(video_path: str | None, api_key: str):
 
     key = api_key.strip() if api_key else ""
     vlm_placeholder = (
-        '<div style="color:#888;font-size:0.9rem"><i>No API key — skipping Claude reasoning.</i></div>'
+        _dark_status("No API key set — add one above to enable Claude reasoning.")
         if not key else
-        '<div style="color:#888;font-size:0.9rem"><i>⏳ Asking Claude…</i></div>'
+        _dark_status("⏳ Asking Claude…")
     )
 
     yield (
@@ -654,21 +661,26 @@ def build_ui() -> gr.Blocks:
             # ══ Tab 1: Single video ══════════════════════════════════════════
             with gr.Tab("  Single video  "):
 
-                # ── Input + result row ───────────────────────────────────────
-                with gr.Row(equal_height=False):
-                    with gr.Column(scale=1):
-                        gr.HTML(_section("📥  Input"))
+                # ── Row 1: upload ────────────────────────────────────────────
+                gr.HTML(_section("📥  Input"))
+                with gr.Row():
+                    with gr.Column(scale=3):
                         video_in = gr.Video(
                             label="Upload a manipulation video",
                             sources=["upload"],
                         )
+                    with gr.Column(scale=1, min_width=140):
+                        gr.HTML("<div style='height:8px'></div>", container=False)
                         run_btn = gr.Button(
-                            "Analyze", variant="primary", size="lg",
+                            "▶  Analyze", variant="primary", size="lg",
                             elem_id="pqa-analyze-btn",
                         )
 
+                # ── Row 2: skeleton overlay  |  Claude reasoning (side-by-side) ──
+                gr.HTML(_section("📹  Results"))
+                with gr.Row(equal_height=True):
+                    # Left — result video
                     with gr.Column(scale=1):
-                        gr.HTML(_section("📹  Result"))
                         video_toggle = gr.Radio(
                             ["Skeleton overlay", "Original"],
                             value="Skeleton overlay",
@@ -676,34 +688,45 @@ def build_ui() -> gr.Blocks:
                         )
                         video_out = gr.Video(label="")
                         video_paths_state = gr.State()
-                        gr.HTML(_section("📊  Quality score"))
-                        score_display = gr.HTML(elem_classes=["pqa-host"])
 
-                # ── Metric legend ────────────────────────────────────────────
+                    # Right — Claude streams live next to the video
+                    with gr.Column(scale=1):
+                        gr.HTML(
+                            '<div style="display:flex;align-items:center;gap:8px;'
+                            'margin-bottom:6px">'
+                            '<span style="font-size:0.68rem;font-weight:700;'
+                            'text-transform:uppercase;letter-spacing:.1em;color:#9ca3af">'
+                            '🤖  Claude video reasoning</span>'
+                            '<span style="font-size:0.72rem;color:#c4b5fd;'
+                            'background:rgba(139,92,246,0.12);border:1px solid '
+                            'rgba(139,92,246,0.25);border-radius:12px;padding:1px 8px">'
+                            'streams live</span></div>',
+                            container=False,
+                        )
+                        vlm_display = gr.HTML(
+                            '<div style="background:#0f172a;border-radius:10px;'
+                            'padding:20px;min-height:200px;display:flex;'
+                            'align-items:center;justify-content:center">'
+                            '<span style="color:#475569;font-size:0.82rem">'
+                            'Upload a video and click Analyze to see Claude\'s '
+                            'primitive-by-primitive reasoning appear here live.</span></div>'
+                        )
+
+                # ── Score + metric pills (full width below) ──────────────────
+                gr.HTML(_section("📊  Quality score"))
+                score_display = gr.HTML(elem_classes=["pqa-host"])
                 gr.HTML(_metrics_legend(), elem_classes=["pqa-host"])
 
-                # ── Charts ──────────────────────────────────────────────────
+                # ── Charts ───────────────────────────────────────────────────
                 gr.HTML(_section("📈  Motion analysis"))
                 with gr.Row():
                     radar_plot    = gr.HTML()
                     timeline_plot = gr.HTML()
-
                 bars_plot = gr.HTML()
 
                 # ── Primitive sequence ───────────────────────────────────────
                 gr.HTML(_section("🏷  Detected primitive sequence"))
                 prim_display = gr.HTML()
-
-                # ── Claude streaming panel ───────────────────────────────────
-                gr.HTML(_section("🤖  Claude video reasoning"))
-                gr.HTML(
-                    '<div style="font-size:0.8rem;color:#9ca3af;margin-bottom:6px">'
-                    'Claude watches 20 timestamped frames and labels each primitive '
-                    'with timestamps and a quality note — streams live when an API key is set.'
-                    '</div>',
-                    container=False,
-                )
-                vlm_display = gr.HTML()
 
                 run_btn.click(
                     fn=analyze_single,
