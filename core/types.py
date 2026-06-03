@@ -85,6 +85,16 @@ class ScoredSegment:
 
 
 @dataclass
+class VLMSegment:
+    """One primitive identified by the VLM, with timestamps and a quality note."""
+    primitive: str      # "reach", "grasp", "lift", "transport", "place", "retract"
+    start_sec: float
+    end_sec: float
+    quality: str        # "good", "ok", "poor"
+    note: str           # one-sentence reasoning from the model
+
+
+@dataclass
 class VLMEvaluation:
     task_description: str
     task_success: bool
@@ -92,6 +102,7 @@ class VLMEvaluation:
     primitives_observed: list[str]
     notes: str
     skipped: bool = False
+    segments: list[VLMSegment] = field(default_factory=list)
 
 
 @dataclass

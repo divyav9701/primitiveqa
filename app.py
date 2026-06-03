@@ -233,20 +233,72 @@ def _format_primitive_sequence(result: AnalysisResult) -> str:
     return " ".join(parts) if parts else "<i>Only UNKNOWN segments detected — try a longer clip with clearer hand visibility.</i>"
 
 
+_VLM_PRIM_ICON = {
+    "reach": "→", "grasp": "✊", "lift": "↑",
+    "transport": "⇒", "place": "↓", "retract": "←",
+}
+_VLM_QUALITY_COLOR = {"good": "#2A9D8F", "ok": "#E9C46A", "poor": "#E76F51"}
+
+
 def _format_vlm(result: AnalysisResult) -> str:
+    """Render Claude's video-reasoning output as a primitive timeline table."""
     v = result.vlm_eval
     if v is None or v.skipped:
         note = v.notes if v else "Not evaluated."
-        return f"<i style='color:#888'>{note}</i>"
-    status = "Success" if v.task_success else "Not successful"
+        return (
+            f'<div style="color:#888;font-size:0.9rem;padding:8px 0">'
+            f'<i>{note}</i></div>'
+        )
+
+    status_icon  = "✅" if v.task_success else "❌"
     status_color = "#2A9D8F" if v.task_success else "#E76F51"
-    prim_list = ", ".join(v.primitives_observed) if v.primitives_observed else "—"
-    return (
-        f"<b>{v.task_description}</b><br>"
-        f'<span style="color:{status_color};font-weight:600">{status}</span> '
-        f"&nbsp;|&nbsp; Confidence: {v.confidence:.0%} &nbsp;|&nbsp; Primitives: {prim_list}<br>"
-        f"<i style='color:#888'>{v.notes}</i>"
+    html = (
+        f'<div style="font-weight:600;font-size:1rem;margin-bottom:10px">'
+        f'{status_icon} <span style="color:{status_color}">{v.task_description}</span> '
+        f'<span style="color:#888;font-weight:400;font-size:0.85rem">'
+        f'({v.confidence:.0%} confidence)</span></div>'
     )
+
+    if not v.segments:
+        html += f'<i style="color:#888">{v.notes}</i>'
+        return html
+
+    # Timeline table
+    html += (
+        '<table style="width:100%;border-collapse:collapse;font-size:0.85rem">'
+        '<tr style="color:#aaa;font-size:0.72rem;text-transform:uppercase;'
+        'letter-spacing:.04em">'
+        '<td style="padding:4px 10px 4px 4px">Time</td>'
+        '<td style="padding:4px 10px">Primitive</td>'
+        '<td style="padding:4px 10px">Quality</td>'
+        '<td style="padding:4px 4px">Claude note</td>'
+        '</tr>'
+    )
+    for seg in v.segments:
+        icon  = _VLM_PRIM_ICON.get(seg.primitive, "?")
+        color = _VLM_QUALITY_COLOR.get(seg.quality, "#888")
+        badge = (
+            f'<span style="background:{color}22;border:1px solid {color};'
+            f'border-radius:4px;padding:1px 7px;color:{color};font-size:0.78rem">'
+            f'{seg.quality}</span>'
+        )
+        html += (
+            f'<tr style="border-top:1px solid #eee">'
+            f'<td style="color:#888;white-space:nowrap;padding:6px 10px 6px 4px">'
+            f'{seg.start_sec:.1f}–{seg.end_sec:.1f}s</td>'
+            f'<td style="font-weight:600;padding:6px 10px">{icon} {seg.primitive.capitalize()}</td>'
+            f'<td style="padding:6px 10px">{badge}</td>'
+            f'<td style="padding:6px 4px;color:#555">{seg.note}</td>'
+            f'</tr>'
+        )
+    html += '</table>'
+
+    if v.notes:
+        html += (
+            f'<div style="margin-top:8px;color:#888;font-size:0.82rem">'
+            f'<i>{v.notes}</i></div>'
+        )
+    return html
 
 
 def _export_dataset_json(results: list[AnalysisResult], names: list[str]) -> Path:
@@ -333,7 +385,7 @@ def _clip_info_html(name: str, r: AnalysisResult) -> str:
         f'<div style="font-size:1.3rem;font-weight:bold;text-align:center;color:{color}">'
         f"{name}: {q.composite:.0%}</div>"
         + _metrics_panel(q)
-        + '<div style="margin-top:6px;text-align:center"><b>Claude task evaluation</b></div>'
+        + '<div style="margin-top:6px;text-align:center"><b>Claude video reasoning</b></div>'
         + f'<div style="text-align:center">{_format_vlm(r)}</div>'
     )
 
@@ -473,7 +525,11 @@ def build_ui() -> gr.Blocks:
 
                 bars_plot   = gr.HTML(label="Per-segment quality breakdown")
                 prim_display = gr.HTML(label="Detected primitive sequence")
-                gr.Markdown("### Claude task evaluation")
+                gr.Markdown(
+                    "### Claude video reasoning\n"
+                    "*Requires API key — Claude watches the video and labels each primitive "
+                    "with timestamps and a quality note.*"
+                )
                 vlm_display = gr.HTML()
 
                 run_btn.click(
