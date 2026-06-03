@@ -15,7 +15,7 @@ import pandas as pd
 
 import pipeline as pqa
 from core.types import AnalysisResult, PrimitiveType, VLMEvaluation
-from evaluation.vlm import parse_response, stream_raw
+from evaluation.vlm import parse_response, stream_prose, prose_to_html
 from visualization.charts import per_segment_bars, primitive_timeline, quality_radar
 from visualization.dataset_charts import (
     dataset_health_score,
@@ -475,34 +475,21 @@ def analyze_single(video_path: str | None, api_key: str):
 
     # ── Phase 3: stream Claude token by token into the panel ─────────────────
     accumulated = ""
-    def stream_html_wrap(t: str) -> str:
-        safe = t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        return (
-            '<div style="background:#0f172a;border-radius:10px;padding:14px 16px;'
-            'max-height:300px;overflow-y:auto">'
-            '<div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;'
-            'letter-spacing:.1em;color:#475569;margin-bottom:8px">Claude · live output</div>'
-            f'<pre style="margin:0;font-family:\'SF Mono\',Monaco,monospace;'
-            f'font-size:0.75rem;color:#e2e8f0;white-space:pre-wrap;'
-            f'line-height:1.7">{safe}<span style="opacity:.7">▌</span></pre>'
-            '</div>'
-        )
-    for chunk in stream_raw(video_path, api_key=key):
+    # ── Phase 3: stream Claude prose token by token ───────────────────────────
+    for chunk in stream_prose(video_path, api_key=key):
         accumulated += chunk
         yield (
             annotated, "Skeleton overlay", video_paths,
             score_html, radar_html, timeline_html, bars_html, prim_html,
-            stream_html_wrap(accumulated),
+            prose_to_html(accumulated, cursor=True),
         )
 
-    # ── Phase 4: parse and render final table ─────────────────────────────────
-    if accumulated:
-        vlm_eval = parse_response(accumulated)
-        result.vlm_eval = vlm_eval
-        final_vlm = _format_vlm(result)
-    else:
-        final_vlm = '<div style="color:#888;font-size:0.9rem"><i>Claude returned no output.</i></div>'
-
+    # ── Phase 4: finalise — remove cursor ─────────────────────────────────────
+    final_vlm = (
+        prose_to_html(accumulated, cursor=False)
+        if accumulated else
+        _dark_status("Claude returned no output.")
+    )
     yield (
         annotated, "Skeleton overlay", video_paths,
         score_html, radar_html, timeline_html, bars_html, prim_html,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 from pathlib import Path
 
 import cv2
@@ -14,9 +15,39 @@ from core.types import VLMEvaluation, VLMSegment
 
 N_SAMPLE_FRAMES = 20
 
+# ── JSON prompt (used by evaluate() / batch analysis) ────────────────────────
 SYSTEM_PROMPT = """You are a robotics training-data quality evaluator.
 You analyse sequences of frames from hand manipulation videos and return
 structured JSON — nothing else."""
+
+# ── Prose prompt (used by stream_prose() / live single-video display) ────────
+PROSE_SYSTEM = """You are a robotics trainer reviewing a teleoperation demonstration.
+You write short, clear assessments of hand manipulation videos."""
+
+PROSE_PROMPT = """These {n} frames are evenly sampled from a {duration:.1f}s manipulation video.
+Each frame has its timestamp in the top-left corner (yellow text).
+
+Analyze the video and respond in plain text using exactly this format — no JSON, no extra sections:
+
+**Task:** [one sentence] · [✅ or ❌] [confidence]%
+
+---
+
+[Repeat the block below for each primitive you observe:]
+
+**[icon] [Primitive]** · [start]–[end]s · [good / ok / poor]
+[One sentence — what happened and any quality issue.]
+
+---
+
+*[One sentence on overall training-data quality — detection gaps, occlusion, blur, etc.]*
+
+Icons and primitives: → reach  ✊ grasp  ↑ lift  ⇒ transport  ↓ place  ← retract
+
+Quality rubric:
+  good = smooth, direct, deliberate — no corrections needed
+  ok   = minor hesitation, slight deviation, or brief occlusion
+  poor = jerky, wandering, highly uncertain, or major occlusion"""
 
 USER_PROMPT = """These {n} frames are evenly sampled from a {duration:.1f}s manipulation video.
 Each frame has its timestamp burned into the top-left corner (yellow text).
@@ -108,6 +139,77 @@ def _build_content(video_path: str | Path) -> tuple[list[dict], float]:
         "text": USER_PROMPT.format(n=len(frame_bytes), duration=duration),
     })
     return content, duration
+
+
+def prose_to_html(text: str, cursor: bool = True) -> str:
+    """Render the streaming prose as styled HTML — bold, italic, hr, color."""
+    import html as _html
+    lines = []
+    for raw_line in text.split("\n"):
+        line = _html.escape(raw_line)
+        # **bold** → <b>
+        line = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", line)
+        # *italic* → <i style="color:#94a3b8">
+        line = re.sub(r"\*(.+?)\*", r'<i style="color:#94a3b8">\1</i>', line)
+        # --- → styled hr
+        if line.strip() == "---":
+            line = '<hr style="border:none;border-top:1px solid #1e3a5f;margin:10px 0">'
+        lines.append(line)
+    body = "<br>".join(lines)
+    if cursor:
+        body += '<span style="color:#6366f1;animation:blink 1s step-end infinite">▌</span>'
+    return (
+        '<div style="background:#0f172a;border-radius:10px;padding:18px 20px;'
+        'min-height:200px;max-height:420px;overflow-y:auto">'
+        '<div style="font-size:0.66rem;font-weight:700;text-transform:uppercase;'
+        'letter-spacing:.1em;color:#334155;margin-bottom:12px">Claude · reasoning</div>'
+        f'<div style="font-size:0.84rem;color:#cbd5e1;line-height:1.75">{body}</div>'
+        "</div>"
+    )
+
+
+def stream_prose(
+    video_path: str | Path, api_key: str | None = None
+):
+    """Generator that streams Claude's prose analysis chunk by chunk.
+
+    Yields str chunks. Caller accumulates and calls prose_to_html() for display.
+    Uses the human-readable PROSE_PROMPT instead of JSON.
+    """
+    key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key:
+        return
+
+    try:
+        import anthropic
+    except ImportError:
+        return
+
+    content, duration = _build_content(video_path)
+    if not content:
+        return
+
+    # Replace the JSON user message with the prose one
+    content[-1] = {
+        "type": "text",
+        "text": PROSE_PROMPT.format(
+            n=sum(1 for c in content if c["type"] == "image"),
+            duration=duration,
+        ),
+    }
+
+    try:
+        client = anthropic.Anthropic(api_key=key, max_retries=1)
+        with client.messages.stream(
+            model="claude-sonnet-4-6",
+            max_tokens=800,
+            system=PROSE_SYSTEM,
+            messages=[{"role": "user", "content": content}],
+        ) as stream:
+            for text in stream.text_stream:
+                yield text
+    except Exception:  # noqa: BLE001
+        return
 
 
 def stream_raw(
