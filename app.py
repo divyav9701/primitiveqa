@@ -166,6 +166,20 @@ APP_CSS = """
 
 /* ── Dataset health score big number ───────────────────────── */
 .pqa-health-score{text-align:center;padding:16px 0 4px}
+
+/* ── Result video card ──────────────────────────────────────── */
+#pqa-result-video{
+  background:#0f172a !important;
+  border:1px solid #1e3a5f !important;
+  border-radius:12px !important;
+  overflow:hidden !important;
+  padding:0 !important}
+#pqa-result-video .empty{background:#0f172a !important;border:none !important}
+#pqa-result-video video{border-radius:0 !important;display:block;width:100%}
+#pqa-result-video label{
+  color:#334155 !important;font-size:0.66rem !important;
+  font-weight:700 !important;text-transform:uppercase !important;
+  letter-spacing:.1em !important;padding:10px 14px 6px !important}
 """
 
 # ── Static HTML fragments ─────────────────────────────────────────────────────
@@ -610,30 +624,36 @@ def analyze_batch(video_files: list | None, api_key: str, progress=gr.Progress()
 
 AUTOPLAY_JS = """
 () => {
-  function play(v) {
-    if (!v || !v.src) return;
+  // ── 1. Loop + autoplay the result video ────────────────────────────────
+  // Poll every 350 ms — Gradio sets video.src via JS property (not the HTML
+  // attribute), so MutationObserver on attributes misses it reliably.
+  setInterval(() => {
+    const c = document.getElementById('pqa-result-video');
+    if (!c) return;
+    const v = c.querySelector('video');
+    if (!v) return;
     v.muted = true;
     v.loop  = true;
-    v.play().catch(() => {});
-  }
+    if (v.src && v.paused && v.readyState >= 2) v.play().catch(() => {});
+  }, 350);
 
-  function watch(containerId) {
-    const setup = () => {
-      const c = document.getElementById(containerId);
-      if (!c) return;
-      // Play any video already present
-      play(c.querySelector('video'));
-      // Watch for src changes (new analysis result) and new video elements
-      new MutationObserver(() => play(c.querySelector('video')))
-        .observe(c, { childList: true, subtree: true,
-                      attributes: true, attributeFilter: ['src'] });
-    };
-    // Try immediately, then retry after Gradio finishes mounting
-    setTimeout(setup, 600);
-    setTimeout(setup, 2000);
-  }
+  // ── 2. Auto-scroll the Claude prose panel as text streams in ────────────
+  const scrollToBottom = () => {
+    const host = document.getElementById('pqa-vlm-display');
+    if (!host) return;
+    // The scrollable element is the div we render with overflow-y:auto
+    const scroller = host.querySelector('[style*="overflow-y"]') || host;
+    scroller.scrollTop = scroller.scrollHeight;
+  };
 
-  watch('pqa-result-video');
+  const setupScroll = () => {
+    const host = document.getElementById('pqa-vlm-display');
+    if (!host) return;
+    new MutationObserver(scrollToBottom)
+      .observe(host, { childList: true, subtree: true, characterData: true });
+  };
+  setTimeout(setupScroll,  800);
+  setTimeout(setupScroll, 2500);
 }
 """
 
@@ -726,7 +746,8 @@ def build_ui() -> gr.Blocks:
                             'align-items:center;justify-content:center">'
                             '<span style="color:#475569;font-size:0.82rem">'
                             'Upload a video and click Analyze to see Claude\'s '
-                            'primitive-by-primitive reasoning appear here live.</span></div>'
+                            'primitive-by-primitive reasoning appear here live.</span></div>',
+                            elem_id="pqa-vlm-display",
                         )
 
                 # ── Score + metric pills (full width below) ──────────────────
