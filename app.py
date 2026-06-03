@@ -109,31 +109,106 @@ def _tip_html(name: str) -> str:
     return "<br>".join(line for line in lines if line)
 
 
-# CSS for the pop-up hover tooltips (native `title` tooltips are tiny and don't
-# work on chart images, so we draw our own). Injected once via gr.HTML; a <style>
-# block applies page-wide. The tooltip sits below the pill and the legend/panel
-# reserve padding-bottom so it's never clipped by the component box.
-TOOLTIP_CSS = """
-<style>
-/* let the pop-up escape its component box instead of being clipped */
-.pqa-host, .pqa-host *{overflow:visible !important}
-.pqa-pill{position:relative;display:inline-block;cursor:help;padding:4px 10px;
-  margin:3px;border-radius:6px;font-size:0.85rem;border:1px solid #ccc}
-.pqa-pill > .pqa-tip{visibility:hidden;opacity:0;position:absolute;top:140%;
-  left:50%;transform:translateX(-50%);background:#1f2937;color:#fff;padding:8px 11px;
-  border-radius:6px;width:230px;font-size:0.78rem;line-height:1.5;font-weight:400;
-  z-index:9999;transition:opacity .12s;box-shadow:0 6px 18px rgba(0,0,0,.28);
-  text-align:left;white-space:normal}
-/* Gradio's theme darkens <b>/headings; force all tooltip text white */
-.pqa-pill > .pqa-tip, .pqa-pill > .pqa-tip *{color:#fff !important}
-.pqa-pill > .pqa-tip::after{content:"";position:absolute;bottom:100%;left:50%;
-  transform:translateX(-50%);border:6px solid transparent;border-bottom-color:#1f2937}
-.pqa-pill:hover > .pqa-tip{visibility:visible;opacity:1}
-/* keep both compare players short enough to sit side by side on one screen */
-.pqa-clip-video video, .pqa-clip-video{max-height:300px}
-.pqa-clip-video video{object-fit:contain}
-</style>
+APP_CSS = """
+/* ── Reset / base ───────────────────────────────────────────── */
+.gradio-container{max-width:1120px !important;margin:0 auto !important;
+  padding:16px 20px !important}
+
+/* ── Tabs ────────────────────────────────────────────────────── */
+.tab-nav{border-bottom:2px solid #e5e7eb !important;margin-bottom:0 !important}
+.tab-nav button{font-weight:600 !important;font-size:0.88rem !important;
+  color:#6b7280 !important;padding:10px 22px !important;border:none !important;
+  border-radius:0 !important;background:transparent !important}
+.tab-nav button.selected{color:#4f46e5 !important;
+  border-bottom:2px solid #4f46e5 !important}
+
+/* ── Primary action buttons ─────────────────────────────────── */
+#pqa-analyze-btn > button, #pqa-batch-btn > button{
+  background:linear-gradient(135deg,#4338ca,#6366f1) !important;
+  border:none !important;border-radius:10px !important;
+  font-weight:700 !important;font-size:1rem !important;
+  letter-spacing:0.01em !important;
+  box-shadow:0 4px 16px rgba(99,102,241,0.38) !important;
+  transition:box-shadow .18s,transform .18s !important}
+#pqa-analyze-btn > button:hover, #pqa-batch-btn > button:hover{
+  box-shadow:0 6px 22px rgba(99,102,241,0.5) !important;
+  transform:translateY(-1px) !important}
+
+/* ── Accordion (API key) ────────────────────────────────────── */
+#pqa-api-key{border:1px solid #e5e7eb !important;border-radius:10px !important;
+  background:#fafafa !important;margin-bottom:8px !important}
+
+/* ── Section dividers ───────────────────────────────────────── */
+.pqa-section{font-size:0.68rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:0.1em;color:#9ca3af;padding:14px 0 6px;
+  border-top:1px solid #f3f4f6;margin-top:6px}
+
+/* ── Hover tooltips + pill overflow ────────────────────────── */
+.pqa-host,.pqa-host *{overflow:visible !important}
+.pqa-pill{position:relative;display:inline-block;cursor:help;
+  padding:4px 10px;margin:3px;border-radius:6px;
+  font-size:0.84rem;border:1px solid #ccc}
+.pqa-pill>.pqa-tip{visibility:hidden;opacity:0;position:absolute;
+  top:140%;left:50%;transform:translateX(-50%);
+  background:#1f2937;color:#fff;padding:8px 11px;border-radius:8px;
+  width:230px;font-size:0.78rem;line-height:1.5;font-weight:400;
+  z-index:9999;transition:opacity .12s;
+  box-shadow:0 8px 24px rgba(0,0,0,.28);text-align:left;white-space:normal}
+.pqa-pill>.pqa-tip,.pqa-pill>.pqa-tip *{color:#fff !important}
+.pqa-pill>.pqa-tip::after{content:"";position:absolute;bottom:100%;left:50%;
+  transform:translateX(-50%);border:6px solid transparent;
+  border-bottom-color:#1f2937}
+.pqa-pill:hover>.pqa-tip{visibility:visible;opacity:1}
+
+/* ── Compare video players ──────────────────────────────────── */
+.pqa-clip-video video,.pqa-clip-video{max-height:280px}
+.pqa-clip-video video{object-fit:contain;border-radius:8px}
+
+/* ── Dataset health score big number ───────────────────────── */
+.pqa-health-score{text-align:center;padding:16px 0 4px}
 """
+
+# ── Static HTML fragments ─────────────────────────────────────────────────────
+
+HEADER_HTML = """
+<div style="background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%);
+  border-radius:14px;padding:26px 32px;margin-bottom:16px">
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <div style="font-size:2.4rem;line-height:1;user-select:none">⬡</div>
+    <div style="flex:1;min-width:200px">
+      <div style="font-size:1.55rem;font-weight:800;color:#fff;
+           letter-spacing:-0.02em;line-height:1.1">PrimitiveQA</div>
+      <div style="font-size:0.82rem;color:#94a3b8;margin-top:4px">
+        Quality layer for physical AI training data
+      </div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+      <span style="background:rgba(99,102,241,0.18);color:#a5b4fc;
+        padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:600;
+        border:1px solid rgba(99,102,241,0.3)">→ reach</span>
+      <span style="background:rgba(249,115,22,0.15);color:#fdba74;
+        padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:600;
+        border:1px solid rgba(249,115,22,0.25)">✊ grasp</span>
+      <span style="background:rgba(16,185,129,0.15);color:#6ee7b7;
+        padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:600;
+        border:1px solid rgba(16,185,129,0.25)">↑ lift</span>
+      <span style="background:rgba(234,179,8,0.15);color:#fde047;
+        padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:600;
+        border:1px solid rgba(234,179,8,0.25)">⇒ transport</span>
+      <span style="background:rgba(239,68,68,0.15);color:#fca5a5;
+        padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:600;
+        border:1px solid rgba(239,68,68,0.25)">↓ place</span>
+      <span style="background:rgba(139,92,246,0.15);color:#c4b5fd;
+        padding:4px 12px;border-radius:20px;font-size:0.72rem;font-weight:600;
+        border:1px solid rgba(139,92,246,0.25)">← retract</span>
+    </div>
+  </div>
+</div>
+"""
+
+
+def _section(label: str) -> str:
+    return f'<div class="pqa-section">{label}</div>'
 
 
 def _metric_pill(name: str, value: float | None = None) -> str:
@@ -393,14 +468,18 @@ def analyze_single(video_path: str | None, api_key: str):
 
     # ── Phase 3: stream Claude token by token into the panel ─────────────────
     accumulated = ""
-    stream_html_wrap = (
-        lambda t: (
-            '<div style="font-family:monospace;font-size:0.78rem;'
-            'background:#f8f8f8;border-radius:6px;padding:10px;'
-            'max-height:280px;overflow-y:auto;white-space:pre-wrap;'
-            'color:#333">' + t.replace("<", "&lt;").replace(">", "&gt;") + "▌</div>"
+    def stream_html_wrap(t: str) -> str:
+        safe = t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return (
+            '<div style="background:#0f172a;border-radius:10px;padding:14px 16px;'
+            'max-height:300px;overflow-y:auto">'
+            '<div style="font-size:0.68rem;font-weight:600;text-transform:uppercase;'
+            'letter-spacing:.1em;color:#475569;margin-bottom:8px">Claude · live output</div>'
+            f'<pre style="margin:0;font-family:\'SF Mono\',Monaco,monospace;'
+            f'font-size:0.75rem;color:#e2e8f0;white-space:pre-wrap;'
+            f'line-height:1.7">{safe}<span style="opacity:.7">▌</span></pre>'
+            '</div>'
         )
-    )
     for chunk in stream_raw(video_path, api_key=key):
         accumulated += chunk
         yield (
@@ -536,61 +615,102 @@ def analyze_batch(video_files: list | None, api_key: str, progress=gr.Progress()
 # ── UI ───────────────────────────────────────────────────────────────────────
 
 def build_ui() -> gr.Blocks:
-    with gr.Blocks(title="PrimitiveQA") as demo:
-        gr.HTML(TOOLTIP_CSS, container=False)
-        gr.Markdown(
-            "# PrimitiveQA\n"
-            "**The quality layer for physical AI data.** "
-            "Decompose manipulation videos into skill primitives and score their quality."
+    with gr.Blocks(title="PrimitiveQA", css=APP_CSS) as demo:
+
+        # ── Global style injection (tooltips need <style> tag) ────────────
+        gr.HTML(
+            '<style>'
+            '.pqa-host,.pqa-host *{overflow:visible !important}'
+            '.pqa-pill{position:relative;display:inline-block;cursor:help;'
+            '  padding:4px 10px;margin:3px;border-radius:6px;font-size:.84rem;border:1px solid #ccc}'
+            '.pqa-pill>.pqa-tip{visibility:hidden;opacity:0;position:absolute;'
+            '  top:140%;left:50%;transform:translateX(-50%);background:#1f2937;color:#fff;'
+            '  padding:8px 11px;border-radius:8px;width:230px;font-size:.78rem;line-height:1.5;'
+            '  font-weight:400;z-index:9999;transition:opacity .12s;'
+            '  box-shadow:0 8px 24px rgba(0,0,0,.28);text-align:left;white-space:normal}'
+            '.pqa-pill>.pqa-tip,.pqa-pill>.pqa-tip *{color:#fff !important}'
+            '.pqa-pill>.pqa-tip::after{content:"";position:absolute;bottom:100%;left:50%;'
+            '  transform:translateX(-50%);border:6px solid transparent;border-bottom-color:#1f2937}'
+            '.pqa-pill:hover>.pqa-tip{visibility:visible;opacity:1}'
+            '.pqa-clip-video video,.pqa-clip-video{max-height:280px}'
+            '.pqa-clip-video video{object-fit:contain;border-radius:8px}'
+            '</style>',
+            container=False,
         )
 
-        api_key_box = gr.Textbox(
-            label="Anthropic API key (optional — enables Claude task evaluation)",
-            placeholder="sk-ant-...",
-            type="password",
-            value=os.environ.get("ANTHROPIC_API_KEY", ""),
-        )
+        gr.HTML(HEADER_HTML, container=False)
+
+        with gr.Accordion("🔑  Anthropic API key", open=False, elem_id="pqa-api-key"):
+            api_key_box = gr.Textbox(
+                label="",
+                placeholder="sk-ant-...  (optional — enables Claude video reasoning, ~$0.05/clip)",
+                type="password",
+                value=os.environ.get("ANTHROPIC_API_KEY", ""),
+                show_label=False,
+            )
 
         with gr.Tabs():
 
-            # ── Tab 1: Single video ──────────────────────────────────────────
-            with gr.Tab("Single video"):
-                with gr.Row():
+            # ══ Tab 1: Single video ══════════════════════════════════════════
+            with gr.Tab("  Single video  "):
+
+                # ── Input + result row ───────────────────────────────────────
+                with gr.Row(equal_height=False):
                     with gr.Column(scale=1):
-                        video_in = gr.Video(label="Upload manipulation video", sources=["upload"])
-                        run_btn = gr.Button("Analyze", variant="primary", size="lg")
+                        gr.HTML(_section("📥  Input"))
+                        video_in = gr.Video(
+                            label="Upload a manipulation video",
+                            sources=["upload"],
+                        )
+                        run_btn = gr.Button(
+                            "Analyze", variant="primary", size="lg",
+                            elem_id="pqa-analyze-btn",
+                        )
 
                     with gr.Column(scale=1):
+                        gr.HTML(_section("📹  Result"))
                         video_toggle = gr.Radio(
                             ["Skeleton overlay", "Original"],
                             value="Skeleton overlay",
-                            label="Show in player",
-                            info="After analyzing, switch the player between the tracked-skeleton overlay and your original clip.",
+                            label="Show",
                         )
-                        video_out = gr.Video(label="Result")
+                        video_out = gr.Video(label="")
                         video_paths_state = gr.State()
+                        gr.HTML(_section("📊  Quality score"))
                         score_display = gr.HTML(elem_classes=["pqa-host"])
 
+                # ── Metric legend ────────────────────────────────────────────
                 gr.HTML(_metrics_legend(), elem_classes=["pqa-host"])
 
+                # ── Charts ──────────────────────────────────────────────────
+                gr.HTML(_section("📈  Motion analysis"))
                 with gr.Row():
-                    radar_plot   = gr.HTML(label="Quality radar")
-                    timeline_plot = gr.HTML(label="Primitive timeline")
+                    radar_plot    = gr.HTML()
+                    timeline_plot = gr.HTML()
 
-                bars_plot   = gr.HTML(label="Per-segment quality breakdown")
-                prim_display = gr.HTML(label="Detected primitive sequence")
-                gr.Markdown(
-                    "### Claude video reasoning\n"
-                    "*Requires API key — Claude watches the video and labels each primitive "
-                    "with timestamps and a quality note.*"
+                bars_plot = gr.HTML()
+
+                # ── Primitive sequence ───────────────────────────────────────
+                gr.HTML(_section("🏷  Detected primitive sequence"))
+                prim_display = gr.HTML()
+
+                # ── Claude streaming panel ───────────────────────────────────
+                gr.HTML(_section("🤖  Claude video reasoning"))
+                gr.HTML(
+                    '<div style="font-size:0.8rem;color:#9ca3af;margin-bottom:6px">'
+                    'Claude watches 20 timestamped frames and labels each primitive '
+                    'with timestamps and a quality note — streams live when an API key is set.'
+                    '</div>',
+                    container=False,
                 )
                 vlm_display = gr.HTML()
 
                 run_btn.click(
                     fn=analyze_single,
                     inputs=[video_in, api_key_box],
-                    outputs=[video_out, video_toggle, video_paths_state, score_display,
-                             radar_plot, timeline_plot, bars_plot, prim_display, vlm_display],
+                    outputs=[video_out, video_toggle, video_paths_state,
+                             score_display, radar_plot, timeline_plot,
+                             bars_plot, prim_display, vlm_display],
                 )
                 video_toggle.change(
                     fn=_swap_video,
@@ -598,57 +718,66 @@ def build_ui() -> gr.Blocks:
                     outputs=video_out,
                 )
 
-            # ── Tab 2: Dataset health ────────────────────────────────────────
-            with gr.Tab("Dataset health"):
-                gr.Markdown(
-                    "Upload multiple clips to get a dataset-level quality report: "
-                    "primitive coverage, score distribution, and overall health score."
+            # ══ Tab 2: Dataset health ════════════════════════════════════════
+            with gr.Tab("  Dataset health  "):
+                gr.HTML(
+                    '<div style="font-size:0.85rem;color:#6b7280;padding:4px 0 12px">'
+                    'Upload multiple clips to get a dataset-level quality report — '
+                    'primitive coverage, score distribution, and overall health score.'
+                    '</div>',
+                    container=False,
                 )
 
                 with gr.Row():
                     with gr.Column(scale=1):
+                        gr.HTML(_section("📥  Upload clips"))
                         batch_files = gr.File(
-                            label="Upload video clips",
+                            label="",
                             file_count="multiple",
                             file_types=["video"],
+                            show_label=False,
                         )
-                        batch_btn = gr.Button("Analyze dataset", variant="primary", size="lg")
-                        # Primitive-coverage status sits right beneath Analyze.
+                        batch_btn = gr.Button(
+                            "Analyze dataset", variant="primary", size="lg",
+                            elem_id="pqa-batch-btn",
+                        )
+                        gr.HTML(_section("⚠️  Coverage gaps"))
                         missing_display = gr.HTML()
 
-                    # Health score + the round radar group on the right.
                     with gr.Column(scale=1):
-                        health_display = gr.HTML()
-                        dataset_radar_plot = gr.HTML(label="Average quality radar")
+                        gr.HTML(_section("🏥  Dataset health score"))
+                        health_display = gr.HTML(elem_classes=["pqa-health-score"])
+                        dataset_radar_plot = gr.HTML()
 
                 gr.HTML(_metrics_legend(), elem_classes=["pqa-host"])
 
-                # The two bar charts side by side, same size.
+                gr.HTML(_section("📊  Coverage & score distribution"))
                 with gr.Row(equal_height=True):
-                    coverage_plot = gr.HTML(label="Primitive coverage")
-                    dist_plot     = gr.HTML(label="Per-clip composite scores")
+                    coverage_plot = gr.HTML()
+                    dist_plot     = gr.HTML()
 
-                # Preview & compare two clips side by side.
-                gr.Markdown("### Preview & compare clips")
+                # ── Compare view ─────────────────────────────────────────────
+                gr.HTML(_section("🔍  Preview & compare clips"))
                 clip_data_state = gr.State()
                 with gr.Row():
                     with gr.Column(scale=1):
                         clip_a_picker = gr.Dropdown(choices=[], label="Clip A")
                         clip_a_toggle = gr.Radio(
                             ["Skeleton overlay", "Original"],
-                            value="Skeleton overlay", label="Show in player",
+                            value="Skeleton overlay", label="Show",
                         )
-                        clip_a_video = gr.Video(label="Clip A preview", height=300, elem_classes=["pqa-clip-video"])
+                        clip_a_video = gr.Video(label="", height=280, elem_classes=["pqa-clip-video"])
                         clip_a_info = gr.HTML(elem_classes=["pqa-host"])
                     with gr.Column(scale=1):
                         clip_b_picker = gr.Dropdown(choices=[], label="Clip B")
                         clip_b_toggle = gr.Radio(
                             ["Skeleton overlay", "Original"],
-                            value="Skeleton overlay", label="Show in player",
+                            value="Skeleton overlay", label="Show",
                         )
-                        clip_b_video = gr.Video(label="Clip B preview", height=300, elem_classes=["pqa-clip-video"])
+                        clip_b_video = gr.Video(label="", height=280, elem_classes=["pqa-clip-video"])
                         clip_b_info = gr.HTML(elem_classes=["pqa-host"])
 
+                gr.HTML(_section("📋  Per-clip summary"))
                 with gr.Row():
                     summary_sort = gr.Dropdown(
                         ["Composite", "Clip", "Detection", "Smoothness", "Path Eff.", "Decisive"],
@@ -656,7 +785,7 @@ def build_ui() -> gr.Blocks:
                         label="Sort by",
                         scale=1,
                     )
-                summary_df    = gr.Dataframe(label="Per-clip summary", wrap=True)
+                summary_df    = gr.Dataframe(label="", wrap=True, show_label=False)
                 summary_state = gr.State()
                 export_file   = gr.File(label="Download dataset_health.json")
 
