@@ -539,7 +539,10 @@ def analyze_single(video_path: str | None, api_key: str):
         vlm_placeholder, frames_b64,
     )
 
-    # ── Phase 2b: render charts one at a time so they appear sequentially ────
+    # ── Phase 2b: render + reveal charts one at a time ───────────────────────
+    import time
+
+    time.sleep(1.0)
     radar_html = _fig_to_html(quality_radar(result), width=380, height=280)
     yield (
         annotated, "Skeleton overlay", video_paths,
@@ -547,6 +550,7 @@ def analyze_single(video_path: str | None, api_key: str):
         vlm_placeholder, frames_b64,
     )
 
+    time.sleep(1.2)
     timeline_html = _fig_to_html(
         primitive_timeline(result.segments, len(result.trajectory)), width=380, height=200
     )
@@ -556,6 +560,7 @@ def analyze_single(video_path: str | None, api_key: str):
         vlm_placeholder, frames_b64,
     )
 
+    time.sleep(1.2)
     bars_html = _fig_to_html(per_segment_bars(result.segments), width=380, height=300)
     yield (
         annotated, "Skeleton overlay", video_paths,
