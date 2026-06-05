@@ -561,11 +561,11 @@ def analyze_single(video_path: str | None, api_key: str):
     chart_q: queue.Queue = queue.Queue()
 
     def _render_charts() -> None:
-        time.sleep(0.8)   # let Claude start first
+        time.sleep(1.5)   # let Claude start first
         chart_q.put(("radar",    _fig_to_html(quality_radar(result), width=380, height=280)))
-        time.sleep(1.1)
+        time.sleep(2.5)
         chart_q.put(("timeline", _fig_to_html(primitive_timeline(result.segments, len(result.trajectory)), width=380, height=200)))
-        time.sleep(1.1)
+        time.sleep(2.5)
         chart_q.put(("bars",     _fig_to_html(per_segment_bars(result.segments), width=380, height=300)))
         chart_q.put(("done", None))
 
