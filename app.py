@@ -515,9 +515,9 @@ def analyze_single(video_path: str | None, api_key: str):
     shutil.copy2(Path(video_path).resolve(), original)
     video_paths = {"Skeleton overlay": annotated, "Original": original}
 
-    radar_html    = _fig_to_html(quality_radar(result))
-    timeline_html = _fig_to_html(primitive_timeline(result.segments, len(result.trajectory)), width=520, height=240)
-    bars_html     = _fig_to_html(per_segment_bars(result.segments), width=900, height=380)
+    radar_html    = _fig_to_html(quality_radar(result), width=380, height=280)
+    timeline_html = _fig_to_html(primitive_timeline(result.segments, len(result.trajectory)), width=380, height=200)
+    bars_html     = _fig_to_html(per_segment_bars(result.segments), width=380, height=300)
     prim_html     = _format_primitive_sequence(result)
 
     key = api_key.strip() if api_key else ""
@@ -821,34 +821,33 @@ def build_ui() -> gr.Blocks:
                             elem_id="pqa-analyze-btn",
                         )
 
-                # ── Row 2: Chat | Video | Claude  (three-column live view) ──
+                # ── Three-column live view: Charts | Video | Claude + Chat ───
                 gr.HTML(_section("📹  Results"))
                 frames_state       = gr.State(value=[])
                 chat_history_state = gr.State(value=[])
                 video_paths_state  = gr.State()
 
-                with gr.Row(equal_height=True):
+                with gr.Row(equal_height=False):
 
-                    # ── Left: chat ───────────────────────────────────────────
+                    # ── Left: charts populate as analysis runs ───────────────
                     with gr.Column(scale=1):
                         gr.HTML(
-                            '<div style="font-size:0.68rem;font-weight:700;'
-                            'text-transform:uppercase;letter-spacing:.1em;'
-                            'color:#9ca3af;margin-bottom:6px">💬  Ask Claude</div>',
+                            '<div style="font-size:0.68rem;font-weight:700;text-transform:'
+                            'uppercase;letter-spacing:.1em;color:#9ca3af;margin-bottom:6px">'
+                            '📈  Motion analysis</div>',
                             container=False,
                         )
-                        chat_display = gr.HTML(
-                            _render_chat([]),
-                            elem_id="pqa-chat-display",
+                        score_display = gr.HTML(elem_classes=["pqa-host"])
+                        radar_plot    = gr.HTML()
+                        timeline_plot = gr.HTML()
+                        bars_plot     = gr.HTML()
+                        gr.HTML(
+                            '<div style="font-size:0.68rem;font-weight:700;text-transform:'
+                            'uppercase;letter-spacing:.1em;color:#9ca3af;margin:8px 0 4px">'
+                            '🏷  Primitives detected</div>',
+                            container=False,
                         )
-                        with gr.Row():
-                            chat_input = gr.Textbox(
-                                placeholder="Ask anything about the video…",
-                                show_label=False,
-                                scale=4,
-                                container=False,
-                            )
-                            send_btn = gr.Button("↑", variant="primary", scale=1, min_width=48)
+                        prim_display = gr.HTML()
 
                     # ── Middle: result video ─────────────────────────────────
                     with gr.Column(scale=1):
@@ -859,7 +858,7 @@ def build_ui() -> gr.Blocks:
                         )
                         video_out = gr.Video(label="", elem_id="pqa-result-video")
 
-                    # ── Right: Claude streams live ───────────────────────────
+                    # ── Right: Claude reasoning + chat ───────────────────────
                     with gr.Column(scale=1):
                         gr.HTML(
                             '<div style="display:flex;align-items:center;gap:8px;'
@@ -875,29 +874,33 @@ def build_ui() -> gr.Blocks:
                         )
                         vlm_display = gr.HTML(
                             '<div style="background:#0f172a;border-radius:10px;'
-                            'padding:20px;min-height:400px;display:flex;'
+                            'padding:20px;min-height:280px;display:flex;'
                             'align-items:center;justify-content:center">'
                             '<span style="color:#475569;font-size:0.82rem">'
-                            'Click Analyze — Claude\'s reasoning streams here live.'
+                            'Click Analyze — reasoning streams here live.'
                             '</span></div>',
                             elem_id="pqa-vlm-display",
                         )
+                        gr.HTML(
+                            '<div style="font-size:0.68rem;font-weight:700;text-transform:'
+                            'uppercase;letter-spacing:.1em;color:#9ca3af;margin:10px 0 6px">'
+                            '💬  Ask Claude</div>',
+                            container=False,
+                        )
+                        chat_display = gr.HTML(
+                            _render_chat([]),
+                            elem_id="pqa-chat-display",
+                        )
+                        with gr.Row():
+                            chat_input = gr.Textbox(
+                                placeholder="Ask anything about the video…",
+                                show_label=False,
+                                scale=4,
+                                container=False,
+                            )
+                            send_btn = gr.Button("↑", variant="primary", scale=1, min_width=48)
 
-                # ── Score + metrics ──────────────────────────────────────────
-                gr.HTML(_section("📊  Quality score"))
-                score_display = gr.HTML(elem_classes=["pqa-host"])
                 gr.HTML(_metrics_legend(), elem_classes=["pqa-host"])
-
-                # ── Charts ───────────────────────────────────────────────────
-                gr.HTML(_section("📈  Motion analysis"))
-                with gr.Row():
-                    radar_plot    = gr.HTML()
-                    timeline_plot = gr.HTML()
-                bars_plot = gr.HTML()
-
-                # ── Primitive sequence ───────────────────────────────────────
-                gr.HTML(_section("🏷  Detected primitive sequence"))
-                prim_display = gr.HTML()
 
                 run_btn.click(
                     fn=analyze_single,
@@ -911,7 +914,6 @@ def build_ui() -> gr.Blocks:
                     inputs=[video_toggle, video_paths_state],
                     outputs=video_out,
                 )
-                # Wire chat — both button click and Enter key
                 chat_inputs  = [chat_input, chat_history_state, frames_state, api_key_box]
                 chat_outputs = [chat_history_state, chat_display, chat_input]
                 send_btn.click(fn=chat_about_video, inputs=chat_inputs, outputs=chat_outputs)
