@@ -501,7 +501,7 @@ def analyze_single(video_path: str | None, api_key: str):
     except Exception as e:
         raise gr.Error(f"Pipeline error: {e}")
 
-    # ── Phase 2: pipeline done — show all charts; start Claude streaming ─────
+    # ── Phase 2: pipeline done — build score, copy videos, start charts ─────
     q = result.overall_quality
     color = _quality_color(q.composite)
     score_html = (
@@ -515,26 +515,52 @@ def analyze_single(video_path: str | None, api_key: str):
     shutil.copy2(Path(video_path).resolve(), original)
     video_paths = {"Skeleton overlay": annotated, "Original": original}
 
-    radar_html    = _fig_to_html(quality_radar(result), width=380, height=280)
-    timeline_html = _fig_to_html(primitive_timeline(result.segments, len(result.trajectory)), width=380, height=200)
-    bars_html     = _fig_to_html(per_segment_bars(result.segments), width=380, height=300)
-    prim_html     = _format_primitive_sequence(result)
-
     key = api_key.strip() if api_key else ""
     vlm_placeholder = (
         _dark_status("No API key set — add one above to enable Claude reasoning.")
         if not key else
         _dark_status("⏳ Asking Claude…")
     )
-
-    # Sample frames for chat (reused across the whole session for this video)
     frames_b64 = get_frames_b64(video_path) if key else []
+    prim_html  = _format_primitive_sequence(result)
 
+    # Shimmer skeleton shown while each chart is still rendering
+    def _shimmer(h: int = 220) -> str:
+        return (
+            f'<div style="background:linear-gradient(90deg,#1e293b 25%,#273548 50%,'
+            f'#1e293b 75%);background-size:200% 100%;border-radius:8px;height:{h}px;'
+            f'animation:pqa-shimmer 1.4s ease-in-out infinite"></div>'
+        )
+
+    # ── Phase 2a: show video + score; charts shimmer ─────────────────────────
+    yield (
+        annotated, "Skeleton overlay", video_paths,
+        score_html, _shimmer(280), _shimmer(200), _shimmer(300), "",
+        vlm_placeholder, frames_b64,
+    )
+
+    # ── Phase 2b: render charts one at a time so they appear sequentially ────
+    radar_html = _fig_to_html(quality_radar(result), width=380, height=280)
+    yield (
+        annotated, "Skeleton overlay", video_paths,
+        score_html, radar_html, _shimmer(200), _shimmer(300), "",
+        vlm_placeholder, frames_b64,
+    )
+
+    timeline_html = _fig_to_html(
+        primitive_timeline(result.segments, len(result.trajectory)), width=380, height=200
+    )
+    yield (
+        annotated, "Skeleton overlay", video_paths,
+        score_html, radar_html, timeline_html, _shimmer(300), "",
+        vlm_placeholder, frames_b64,
+    )
+
+    bars_html = _fig_to_html(per_segment_bars(result.segments), width=380, height=300)
     yield (
         annotated, "Skeleton overlay", video_paths,
         score_html, radar_html, timeline_html, bars_html, prim_html,
-        vlm_placeholder,
-        frames_b64,
+        vlm_placeholder, frames_b64,
     )
 
     if not key:
@@ -786,6 +812,9 @@ def build_ui() -> gr.Blocks:
             '.pqa-pill:hover>.pqa-tip{visibility:visible;opacity:1}'
             '.pqa-clip-video video,.pqa-clip-video{max-height:280px}'
             '.pqa-clip-video video{object-fit:contain;border-radius:8px}'
+            '@keyframes pqa-shimmer{'
+            '0%{background-position:200% 0}'
+            '100%{background-position:-200% 0}}'
             '</style>',
             container=False,
         )
