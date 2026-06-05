@@ -539,61 +539,73 @@ def analyze_single(video_path: str | None, api_key: str):
         vlm_placeholder, frames_b64,
     )
 
-    # ── Phase 2b: render + reveal charts one at a time ───────────────────────
-    import time
-
-    time.sleep(1.0)
-    radar_html = _fig_to_html(quality_radar(result), width=380, height=280)
-    yield (
-        annotated, "Skeleton overlay", video_paths,
-        score_html, radar_html, _shimmer(200), _shimmer(300), "",
-        vlm_placeholder, frames_b64,
-    )
-
-    time.sleep(1.2)
-    timeline_html = _fig_to_html(
-        primitive_timeline(result.segments, len(result.trajectory)), width=380, height=200
-    )
-    yield (
-        annotated, "Skeleton overlay", video_paths,
-        score_html, radar_html, timeline_html, _shimmer(300), "",
-        vlm_placeholder, frames_b64,
-    )
-
-    time.sleep(1.2)
-    bars_html = _fig_to_html(per_segment_bars(result.segments), width=380, height=300)
-    yield (
-        annotated, "Skeleton overlay", video_paths,
-        score_html, radar_html, timeline_html, bars_html, prim_html,
-        vlm_placeholder, frames_b64,
-    )
-
     if not key:
+        # No Claude key — reveal charts one at a time
+        import time
+        radar_html    = _fig_to_html(quality_radar(result), width=380, height=280)
+        timeline_html = _fig_to_html(primitive_timeline(result.segments, len(result.trajectory)), width=380, height=200)
+        bars_html     = _fig_to_html(per_segment_bars(result.segments), width=380, height=300)
+        for r, t, b in [
+            (radar_html,    _shimmer(200), _shimmer(300)),
+            (radar_html,    timeline_html, _shimmer(300)),
+            (radar_html,    timeline_html, bars_html),
+        ]:
+            time.sleep(1.0)
+            yield (annotated, "Skeleton overlay", video_paths, score_html, r, t, b,
+                   _format_primitive_sequence(result), vlm_placeholder, frames_b64)
         return
 
-    # ── Phase 3: stream Claude token by token into the panel ─────────────────
-    accumulated = ""
-    # ── Phase 3: stream Claude prose token by token ───────────────────────────
-    for chunk in stream_prose(video_path, api_key=key):
-        accumulated += chunk
-        yield (
-            annotated, "Skeleton overlay", video_paths,
-            score_html, radar_html, timeline_html, bars_html, prim_html,
-            prose_to_html(accumulated, cursor=True),
-            frames_b64,
+    # ── Phase 3: charts render in background; Claude streams in front ─────────
+    import queue, threading, time
+
+    chart_q: queue.Queue = queue.Queue()
+
+    def _render_charts() -> None:
+        time.sleep(0.8)   # let Claude start first
+        chart_q.put(("radar",    _fig_to_html(quality_radar(result), width=380, height=280)))
+        time.sleep(1.1)
+        chart_q.put(("timeline", _fig_to_html(primitive_timeline(result.segments, len(result.trajectory)), width=380, height=200)))
+        time.sleep(1.1)
+        chart_q.put(("bars",     _fig_to_html(per_segment_bars(result.segments), width=380, height=300)))
+        chart_q.put(("done", None))
+
+    threading.Thread(target=_render_charts, daemon=True).start()
+
+    charts = {"radar": _shimmer(280), "timeline": _shimmer(200), "bars": _shimmer(300)}
+
+    def _drain() -> None:
+        while True:
+            try:
+                name, html = chart_q.get_nowait()
+                if name != "done":
+                    charts[name] = html
+            except queue.Empty:
+                break
+
+    def _state(vlm_html: str) -> tuple:
+        return (
+            annotated, "Skeleton overlay", video_paths, score_html,
+            charts["radar"], charts["timeline"], charts["bars"],
+            _format_primitive_sequence(result), vlm_html, frames_b64,
         )
 
-    # ── Phase 4: finalise — remove cursor ─────────────────────────────────────
-    final_vlm = (
+    # Stream Claude; drain chart queue on every token
+    for chunk in stream_prose(video_path, api_key=key):
+        accumulated += chunk
+        _drain()
+        yield _state(prose_to_html(accumulated, cursor=True))
+
+    # Wait up to 8s for any remaining charts after Claude finishes
+    for _ in range(80):
+        _drain()
+        if charts["bars"] != _shimmer(300):
+            break
+        time.sleep(0.1)
+    _drain()
+
+    yield _state(
         prose_to_html(accumulated, cursor=False)
-        if accumulated else
-        _dark_status("Claude returned no output.")
-    )
-    yield (
-        annotated, "Skeleton overlay", video_paths,
-        score_html, radar_html, timeline_html, bars_html, prim_html,
-        final_vlm,
-        frames_b64,
+        if accumulated else _dark_status("Claude returned no output.")
     )
 
 
