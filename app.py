@@ -590,6 +590,7 @@ def analyze_single(video_path: str | None, api_key: str):
         )
 
     # Stream Claude; drain chart queue on every token
+    accumulated = ""
     for chunk in stream_prose(video_path, api_key=key):
         accumulated += chunk
         _drain()
